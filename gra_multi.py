@@ -2,21 +2,28 @@ import streamlit as st
 import os
 import random
 import time
+import difflib
 from PIL import Image
 
 # --- KONFIGURACJA STRONY ---
-st.set_page_config(page_title="Football Quiz FINAL V6", layout="centered", page_icon="⚽")
+st.set_page_config(page_title="Football Quiz FINAL V7", layout="centered", page_icon="⚽")
 
-# --- CSS (WYGLĄD) ---
+# --- CSS (NAPRAWA WYGLĄDU) ---
 st.markdown("""
     <style>
+    /* Zmniejszenie marginesów, żeby gra mieściła się na ekranie */
     .block-container {
         padding-top: 1rem !important;
-        padding-bottom: 2rem !important;
+        padding-bottom: 5rem !important;
         max-width: 750px;
     }
     .stApp { background-color: #0e1117; }
     
+    /* Ukrycie menu Streamlit */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
     /* Tablica wyników */
     .score-board {
         display: flex; justify-content: space-between; align-items: center;
@@ -25,7 +32,7 @@ st.markdown("""
         border: 1px solid #444; margin-bottom: 10px;
     }
     
-    /* Zdjęcie */
+    /* Stylizacja obrazka */
     img {
         max-height: 350px !important;
         object-fit: contain;
@@ -39,10 +46,8 @@ st.markdown("""
     .p1-box { background-color: #1b5e20; color: #a5d6a7; border: 1px solid #2e7d32; }
     .p2-box { background-color: #0d47a1; color: #90caf9; border: 1px solid #1565c0; }
     
-    /* Alerty */
+    /* Alerty i Bannery */
     .turn-alert { text-align: center; color: #ffca28; font-weight: bold; font-size: 15px; margin: 5px 0; }
-    
-    /* Banner zwycięzcy */
     .winner-banner {
         background-color: #ffd700; color: black; padding: 10px;
         text-align: center; border-radius: 8px; font-size: 20px; font-weight: bold; margin-bottom: 5px;
@@ -51,14 +56,8 @@ st.markdown("""
         font-size: 22px; color: #4CAF50; text-align: center; font-weight: bold; margin-bottom: 15px;
     }
 
-    /* Ukrycie domyślnego menu Streamlit */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    
-    /* Zmniejszenie odstępów w formularzu */
-    .stForm { margin-top: 0px; }
-    div[data-testid="stForm"] { border: none; padding: 0; }
+    /* Wycentrowanie przycisków formularza */
+    div[data-testid="column"] { display: flex; align-items: center; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -75,7 +74,6 @@ class GlobalGameState:
         self.current_image = None
         self.image_pool = []
         self.round_id = 0
-        
         self.input_reset_counter = 0 
         self.current_round_starter = "P1" 
         
@@ -98,8 +96,10 @@ server = get_server_state()
 # --- LOKALNY STAN ---
 if 'my_role' not in st.session_state:
     st.session_state.my_role = None
+if 'input_mode' not in st.session_state:
+    st.session_state.input_mode = False # False = Lista, True = Wpisywanie (Enter)
 
-# --- FUNKCJE LOGIKI ---
+# --- FUNKCJE POMOCNICZE ---
 def update_heartbeat(role):
     if role == "P1": server.p1_last_seen = time.time()
     elif role == "P2": server.p2_last_seen = time.time()
@@ -153,11 +153,27 @@ def start_new_round():
     server.input_reset_counter = 0 
     server.current_round_starter = server.who_starts_next
 
-def handle_wrong_guess(role):
+# --- LOGIKA GRY ---
+def handle_guess(role, guess_text, all_teams):
+    """Sprawdza odpowiedź (dokładną lub przybliżoną)"""
+    # 1. Dokładne dopasowanie
+    if guess_text == server.current_team:
+        return True
+    
+    # 2. Inteligentne dopasowanie (dla wpisywania z palca)
+    # Znajdź najbliższą nazwę drużyny
+    matches = difflib.get_close_matches(guess_text, all_teams, n=1, cutoff=0.6)
+    if matches:
+        if matches[0] == server.current_team:
+            return True
+    
+    return False
+
+def handle_wrong(role):
     server.input_reset_counter += 1
     if role == "P1":
         server.p1_locked = True
-        server.p2_locked = False
+        server.p2_locked = False # Ping-pong (błąd odblokowuje rywala)
     else:
         server.p2_locked = True
         server.p1_locked = False
@@ -197,9 +213,11 @@ if st.session_state.my_role:
 check_disconnections()
 
 # ==============================================================================
-# 1. LOBBY
+# STRUKTURA APLIKACJI (IF / ELIF GWARANTUJE ŻE OKNA SIĘ NIE NAKŁADAJĄ)
 # ==============================================================================
+
 if server.status == "lobby":
+    # ---------------- LOBBY ----------------
     st.markdown("<h2 style='text-align: center;'>🏆 LOBBY</h2>", unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
@@ -230,7 +248,7 @@ if server.status == "lobby":
 
     st.divider()
 
-    # KONFIGURACJA (Tylko w Lobby!)
+    # KONFIGURACJA (Tylko dla P1 i TYLKO w statusie Lobby)
     if st.session_state.my_role == "P1":
         st.subheader("⚙️ Ustawienia")
         all_leagues = get_available_leagues(FOLDER_Z_KOSZULKAMI)
@@ -261,10 +279,9 @@ if server.status == "lobby":
         time.sleep(1)
         st.rerun()
 
-# ==============================================================================
-# 2. ROZGRYWKA (PLAYING)
-# ==============================================================================
 elif server.status == "playing":
+    # ---------------- GRA WŁAŚCIWA ----------------
+    
     # WYNIK
     st.markdown(f"""
     <div class="score-board">
@@ -285,80 +302,87 @@ elif server.status == "playing":
         try: st.image(Image.open(server.current_image), use_container_width=True)
         except: st.error("Błąd zdjęcia")
 
-    # UŻYCIE FORMULARZA ABY ENTER DZIAŁAŁ
-    # Klucz formularza musi być unikalny per reset inputu
-    with st.form(key=f"game_form_{server.round_id}_{server.input_reset_counter}"):
-        
-        # 1. Pole wyboru (wciśnięcie Enter w tym polu uruchomi pierwszy submit_button)
-        all_teams = sorted(list(set([x[0] for x in server.image_pool])))
-        guess = st.selectbox("Wybierz drużynę i wciśnij ENTER:", [""] + all_teams)
+    all_teams = sorted(list(set([x[0] for x in server.image_pool])))
 
-        # 2. Przyciski w jednej linii (Używamy kolumn wewnątrz formularza)
-        if st.session_state.my_role == "P1":
-            # Dla P1: Zgłaszam | Poddaję | Koniec Gry
-            c1, c2, c3 = st.columns([2, 1, 1])
-            with c1:
-                submit_guess = st.form_submit_button("ZGŁASZAM 🎯", type="primary", use_container_width=True, disabled=server.p1_locked)
-            with c2:
-                submit_surrender = st.form_submit_button("Poddaję 🏳️", use_container_width=True, disabled=server.p1_locked)
-            with c3:
-                submit_end = st.form_submit_button("🏁 KONIEC", type="secondary", use_container_width=True)
-        else:
-            # Dla P2: Zgłaszam | Poddaję
-            c1, c2 = st.columns([3, 1])
-            with c1:
-                submit_guess = st.form_submit_button("ZGŁASZAM 🎯", type="primary", use_container_width=True, disabled=server.p2_locked)
-            with c2:
-                submit_surrender = st.form_submit_button("Poddaję 🏳️", use_container_width=True, disabled=server.p2_locked)
-            submit_end = False
-
-    # OBSŁUGA AKCJI PO KLIKNIĘCIU (LUB ENTER)
-    
-    # Obsługa Końca Gry (Tylko P1)
-    if st.session_state.my_role == "P1" and submit_end:
-        server.status = "finished"
+    # PRZEŁĄCZNIK TRYBU (Lista vs Klawiatura)
+    mode_toggle = st.toggle("⌨️ Tryb klawiatury (Enter)", value=st.session_state.input_mode)
+    if mode_toggle != st.session_state.input_mode:
+        st.session_state.input_mode = mode_toggle
         st.rerun()
 
-    # Obsługa Zgłoszenia
-    if submit_guess:
-        role = st.session_state.my_role
-        # Sprawdzamy czy gracz nie jest zablokowany (zabezpieczenie backendowe)
-        is_locked = server.p1_locked if role == "P1" else server.p2_locked
+    # FORMULARZ DO GRY
+    # Klucz formularza musi się zmieniać, aby czyścić pola po błędzie
+    with st.form(key=f"game_form_{server.round_id}_{server.input_reset_counter}"):
         
+        user_guess = ""
+        
+        if st.session_state.input_mode:
+            # TRYB TEKSTOWY (Enter działa!)
+            user_guess = st.text_input("Wpisz drużynę i naciśnij ENTER:", placeholder="np. Arsenal")
+        else:
+            # TRYB LISTY
+            user_guess = st.selectbox("Wybierz z listy:", [""] + all_teams)
+
+        # UKŁAD PRZYCISKÓW W JEDNEJ LINII [2, 1, 1]
+        c1, c2, c3 = st.columns([2, 1, 1])
+        
+        with c1:
+            # Główny przycisk zgłaszania (Submit)
+            submit_guess = st.form_submit_button("ZGŁASZAM 🎯", type="primary", use_container_width=True)
+        
+        with c2:
+            submit_surrender = st.form_submit_button("Poddaję 🏳️", use_container_width=True)
+            
+        with c3:
+            # Przycisk końca widoczny tylko dla P1
+            if st.session_state.my_role == "P1":
+                submit_end = st.form_submit_button("🏁 KONIEC", type="secondary", use_container_width=True)
+            else:
+                submit_end = False
+
+    # OBSŁUGA LOGIKI PO KLIKNIĘCIU
+    role = st.session_state.my_role
+    
+    # 1. Koniec gry
+    if submit_end and role == "P1":
+        server.status = "finished"
+        st.rerun()
+        
+    # 2. Sprawdzenie odpowiedzi
+    if submit_guess and user_guess:
+        is_locked = server.p1_locked if role == "P1" else server.p2_locked
         if not is_locked:
-            if guess == server.current_team:
-                handle_win(role)
+            if handle_guess(role, user_guess, all_teams):
+                handle_win(role) # Wygrana!
                 st.rerun()
             else:
                 st.toast("ŹLE! Blokada!", icon="❌")
-                handle_wrong_guess(role)
+                handle_wrong(role)
                 st.rerun()
+        else:
+             st.toast("Jesteś zablokowany!", icon="⛔")
 
-    # Obsługa Poddania
+    # 3. Poddanie
     if submit_surrender:
-        role = st.session_state.my_role
         handle_surrender(role)
         st.rerun()
 
-    # OBAJ ZABLOKOWANI -> KONIEC RUNDY
+    # 4. Obaj zablokowani? -> Koniec rundy
     if server.p1_locked and server.p2_locked:
         server.winner_last_round = "NIKT"
         server.last_correct_answer = server.current_team
-        if server.current_round_starter == "P1":
-            server.who_starts_next = "P2"
-        else:
-            server.who_starts_next = "P1"
+        if server.current_round_starter == "P1": server.who_starts_next = "P2"
+        else: server.who_starts_next = "P1"
         server.status = "round_over"
         st.rerun()
 
     time.sleep(1)
     st.rerun()
 
-# ==============================================================================
-# 3. KONIEC RUNDY
-# ==============================================================================
 elif server.status == "round_over":
-    # W sekcji Round Over przyciski też muszą być widoczne
+    # ---------------- KONIEC RUNDY ----------------
+    
+    # Przycisk końca (dostępny też tutaj)
     if st.session_state.my_role == "P1":
         if st.sidebar.button("🏁 ZAKOŃCZ GRĘ", type="primary"):
             server.status = "finished"
@@ -390,10 +414,8 @@ elif server.status == "round_over":
         time.sleep(1)
         st.rerun()
 
-# ==============================================================================
-# 4. ROZŁĄCZENIE / WALKOWER
-# ==============================================================================
 elif server.status == "disconnected":
+    # ---------------- WALKOWER ----------------
     st.markdown(f"<div class='game-over-box'>🚨 WALKOWER! 🚨<br>{server.disconnect_reason}</div>", unsafe_allow_html=True)
     st.markdown(f"""
     <div style='background-color:#262730; padding:20px; border-radius:10px; margin-top:10px; text-align:center;'>
@@ -408,10 +430,8 @@ elif server.status == "disconnected":
     time.sleep(2)
     st.rerun()
 
-# ==============================================================================
-# 5. KONIEC MECZU (MANUALNY)
-# ==============================================================================
 elif server.status == "finished":
+    # ---------------- KONIEC GRY ----------------
     st.markdown("<div class='game-over-box' style='background-color:#2e7d32'>🏁 KONIEC MECZU 🏁</div>", unsafe_allow_html=True)
     if server.p1_score > server.p2_score:
         msg, color = f"🏆 WYGRYWA: {server.p1_name}!", "#66bb6a"
@@ -431,9 +451,11 @@ elif server.status == "finished":
         reset_game()
         st.rerun()
 
+# Przycisk awaryjny
 if st.sidebar.button("HARD RESET SERWERA"):
     reset_game()
     st.rerun()
+
 
 
 

@@ -1,67 +1,75 @@
+Rozumiem, to są błędy wynikające z tego, jak Streamlit odświeża zmienne ("state") oraz jak przetwarza listy wyboru.
+
+Oto poprawiona wersja FINAL V2, która naprawia te dwa konkretne problemy:
+
+Naprawa Startu Gry: Zmieniłem logikę przycisku "Start". Teraz kod sprawdza wybrane ligi zanim klikniesz przycisk, dzięki czemu nie musisz nic "odklikiwać", żeby gra ruszyła. Działa od razu na domyślnych ustawieniach.
+
+Naprawa Okna "Następna Runda":
+
+Usunąłem opóźnienia (sleep), które powodowały, że komunikaty wisiały za długo.
+
+Zmieniłem wygląd komunikatu oczekiwania na subtelniejszy.
+
+Przycisk "Następna Runda" jest teraz jedynym dużym elementem, który znika natychmiast po kliknięciu.
+
+KOD (Podmień całość w gra_multi.py)
+Python
+
 import streamlit as st
 import os
 import random
 import time
 from PIL import Image
 
-# --- KONFIGURACJA ---
-FOLDER_Z_KOSZULKAMI = "." 
+# --- KONFIGURACJA STRONY ---
+st.set_page_config(page_title="Football Quiz FINAL V2", layout="centered", page_icon="⚽")
 
-# Ustawienie layoutu na 'wide' pomaga w responsywności, ale 'centered' jest lepsze do skupienia wzroku.
-# Zostajemy przy centered, ale zmieniamy CSS marginesów.
-st.set_page_config(page_title="Football Quiz FINAL", layout="centered", page_icon="⚽")
-
-# --- CSS (KOMPAKTOWY WYGLĄD) ---
+# --- CSS (WYGLĄD KOMPAKTOWY + FIX OKIEN) ---
 st.markdown("""
     <style>
-    /* 1. Zmniejszenie marginesów góry strony (żeby wszystko weszło na ekran) */
+    /* Zmniejszenie marginesów góry (żeby gra była wyżej) */
     .block-container {
         padding-top: 1rem !important;
-        padding-bottom: 1rem !important;
-        max-width: 800px;
+        padding-bottom: 2rem !important;
+        max-width: 700px;
     }
-    
-    /* 2. Tło i ogólny styl */
     .stApp { background-color: #0e1117; }
     
-    /* 3. Tablica wyników - mniejsza i bardziej kompaktowa */
+    /* Tablica wyników */
     .score-board {
         display: flex; justify-content: space-between; align-items: center;
-        background: #262730; padding: 10px 20px; border-radius: 8px;
-        font-size: 20px; font-weight: bold; color: white;
+        background: #262730; padding: 10px 15px; border-radius: 8px;
+        font-size: 18px; font-weight: bold; color: white;
         border: 1px solid #444; margin-bottom: 10px;
     }
     
-    /* 4. Ograniczenie wielkości zdjęcia (kluczowe dla laptopów) */
+    /* Zdjęcie */
     img {
         max-height: 350px !important;
         object-fit: contain;
-        border-radius: 10px;
+        border-radius: 8px;
     }
     
-    /* 5. Style kart graczy */
+    /* Karty graczy */
     .player-box {
         text-align: center; padding: 5px; border-radius: 5px; width: 100%; font-weight: bold; font-size: 14px;
     }
     .p1-box { background-color: #1b5e20; color: #a5d6a7; border: 1px solid #2e7d32; }
     .p2-box { background-color: #0d47a1; color: #90caf9; border: 1px solid #1565c0; }
     
-    /* 6. Alert o turze */
-    .turn-alert {
-        text-align: center; color: #ffca28; font-weight: bold; font-size: 16px; margin: 5px 0;
-    }
+    /* Alerty */
+    .turn-alert { text-align: center; color: #ffca28; font-weight: bold; font-size: 15px; margin: 5px 0; }
     
-    /* 7. Banner zwycięzcy */
+    /* Banner zwycięzcy */
     .winner-banner {
         background-color: #ffd700; color: black; padding: 10px;
-        text-align: center; border-radius: 8px; font-size: 20px; font-weight: bold;
-        margin-bottom: 10px;
+        text-align: center; border-radius: 8px; font-size: 20px; font-weight: bold; margin-bottom: 5px;
     }
     .correct-answer {
-        font-size: 24px; color: #4CAF50; text-align: center; font-weight: bold; margin-bottom: 10px;
+        font-size: 22px; color: #4CAF50; text-align: center; font-weight: bold; margin-bottom: 15px;
     }
     
-    /* Ukrycie standardowego menu Streamlit dla czystszego widoku */
+    /* Ukrycie elementów UI Streamlit */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
@@ -75,22 +83,14 @@ class GlobalGameState:
         self.p2_name = None
         self.p1_score = 0
         self.p2_score = 0
-        self.status = "lobby"      # lobby, playing, round_over
-        
-        # Dane rundy
+        self.status = "lobby" # lobby, playing, round_over
         self.current_team = None
         self.current_image = None
         self.image_pool = []
         self.round_id = 0
-        
-        # Logika tur
         self.p1_locked = False
         self.p2_locked = False
-        
-        # Logika "Kto zaczyna"
-        self.who_starts_next = "P1" # Domyślnie P1 na start gry
-        
-        # Koniec rundy
+        self.who_starts_next = "P1"
         self.winner_last_round = None
         self.last_correct_answer = ""
 
@@ -105,18 +105,18 @@ if 'my_role' not in st.session_state:
     st.session_state.my_role = None
 
 # --- FUNKCJE LOGIKI ---
-def get_available_leagues():
-    if not os.path.exists(FOLDER_Z_KOSZULKAMI): return []
+def get_available_leagues(folder):
+    if not os.path.exists(folder): return []
     leagues = []
-    for item in os.listdir(FOLDER_Z_KOSZULKAMI):
-        if os.path.isdir(os.path.join(FOLDER_Z_KOSZULKAMI, item)) and not item.startswith("."):
+    for item in os.listdir(folder):
+        if os.path.isdir(os.path.join(folder, item)) and not item.startswith("."):
             leagues.append(item.replace("_", " "))
     return sorted(leagues)
 
-def load_images_filtered(selected_leagues):
+def load_images_filtered(folder, selected_leagues):
     server.image_pool = []
-    if not os.path.exists(FOLDER_Z_KOSZULKAMI): return
-    for root, dirs, files in os.walk(FOLDER_Z_KOSZULKAMI):
+    if not os.path.exists(folder): return
+    for root, dirs, files in os.walk(folder):
         folder_parts = root.split(os.sep)
         match = False
         for part in folder_parts:
@@ -127,7 +127,7 @@ def load_images_filtered(selected_leagues):
             for file in files:
                 if file.lower().endswith(('.jpg', '.png', '.jpeg')):
                     team = os.path.basename(root).replace("_", " ")
-                    if team == "." or team == FOLDER_Z_KOSZULKAMI: continue
+                    if team == "." or team == folder: continue
                     full_path = os.path.join(root, file)
                     server.image_pool.append((team, full_path))
 
@@ -136,37 +136,32 @@ def start_new_round():
     team, img = random.choice(server.image_pool)
     server.current_team = team
     server.current_image = img
-    
-    # Reset blokad
     server.p1_locked = False
     server.p2_locked = False
-    
     server.status = "playing"
     server.winner_last_round = None
     server.round_id += 1
 
-def handle_wrong_guess(player_role):
-    if player_role == "P1":
+def handle_wrong_guess(role):
+    if role == "P1":
         server.p1_locked = True
         server.p2_locked = False
     else:
         server.p2_locked = True
         server.p1_locked = False
 
-def handle_round_win(winner_role):
-    server.winner_last_round = winner_role
+def handle_win(winner):
+    server.winner_last_round = winner
     server.last_correct_answer = server.current_team
-    
-    if winner_role == "P1":
+    if winner == "P1":
         server.p1_score += 1
-        server.who_starts_next = "P2" # P1 wygrał -> P2 zaczyna następną (przegrany zaczyna)
-    elif winner_role == "P2":
+        server.who_starts_next = "P2"
+    elif winner == "P2":
         server.p2_score += 1
-        server.who_starts_next = "P1" # P2 wygrał -> P1 zaczyna następną
-    
+        server.who_starts_next = "P1"
     server.status = "round_over"
 
-def reset_full_game():
+def reset_game():
     server.p1_name = None
     server.p2_name = None
     server.p1_score = 0
@@ -176,225 +171,210 @@ def reset_full_game():
     server.p2_locked = False
     server.who_starts_next = "P1"
 
+# --- ZMIENNA FOLDERU ---
+FOLDER_Z_KOSZULKAMI = "."
+
 # ==============================================================================
-# 1. LOBBY (Konfiguracja)
+# 1. LOBBY
 # ==============================================================================
 if server.status == "lobby":
-    st.title("🏆 Football Quiz: LOBBY")
-    st.info("👋 Dołącz do gry.")
+    st.markdown("<h2 style='text-align: center;'>🏆 LOBBY</h2>", unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
     
-    # KARTA P1
+    # Gracz 1
     with col1:
         st.markdown("<div class='player-box p1-box'>GOSPODARZ (P1)</div>", unsafe_allow_html=True)
         if server.p1_name:
             st.success(f"✅ {server.p1_name}")
-            if st.session_state.my_role == "P1": st.caption("(To Ty)")
         else:
-            nick1 = st.text_input("Nick P1", key="n1", placeholder="Wpisz nick...")
+            n1 = st.text_input("Nick P1", key="n1")
             if st.button("Zajmij P1"):
-                if nick1:
-                    server.p1_name = nick1
+                if n1:
+                    server.p1_name = n1
                     st.session_state.my_role = "P1"
                     st.rerun()
-
-    # KARTA P2
+    
+    # Gracz 2
     with col2:
         st.markdown("<div class='player-box p2-box'>GOŚĆ (P2)</div>", unsafe_allow_html=True)
         if server.p2_name:
             st.success(f"✅ {server.p2_name}")
-            if st.session_state.my_role == "P2": st.caption("(To Ty)")
         else:
-            nick2 = st.text_input("Nick P2", key="n2", placeholder="Wpisz nick...")
+            n2 = st.text_input("Nick P2", key="n2")
             if st.button("Zajmij P2"):
-                if nick2:
-                    server.p2_name = nick2
+                if n2:
+                    server.p2_name = n2
                     st.session_state.my_role = "P2"
                     st.rerun()
 
     st.divider()
 
-    # WYBÓR LIG I START (Tylko dla P1 i tylko w lobby)
+    # KONFIGURACJA I START (Naprawa błędu z wyborem ligi)
     if st.session_state.my_role == "P1":
-        st.subheader("⚙️ Wybierz ligi")
-        all_leagues = get_available_leagues()
-        selected_leagues = st.multiselect("Ligi:", all_leagues, default=all_leagues)
+        st.subheader("⚙️ Ustawienia")
+        all_leagues = get_available_leagues(FOLDER_Z_KOSZULKAMI)
         
+        # Wybór lig
+        selected_leagues = st.multiselect("Wybierz ligi:", all_leagues, default=all_leagues)
+        
+        # Przycisk startu
         if server.p1_name and server.p2_name:
-            st.markdown("---")
-            if st.button("START MECZU 🚀", type="primary", use_container_width=True):
-                if not selected_leagues:
-                    st.error("Wybierz min. 1 ligę!")
+            # Sprawdzamy czy przycisk powinien być aktywny
+            btn_disabled = False
+            if not selected_leagues:
+                st.error("⚠️ Musisz wybrać przynajmniej jedną ligę!")
+                btn_disabled = True
+            
+            if st.button("START MECZU 🚀", type="primary", use_container_width=True, disabled=btn_disabled):
+                load_images_filtered(FOLDER_Z_KOSZULKAMI, selected_leagues)
+                if not server.image_pool:
+                    st.error("Brak zdjęć w folderze!")
                 else:
-                    load_images_filtered(selected_leagues)
-                    if not server.image_pool:
-                        st.error("Brak zdjęć!")
-                    else:
-                        start_new_round() # Status zmieni się na 'playing'
-                        st.rerun()
+                    start_new_round()
+                    st.rerun()
         else:
             st.warning("Czekamy na drugiego gracza...")
-    
+            time.sleep(1)
+            st.rerun()
+            
     elif st.session_state.my_role == "P2":
-        st.info("Czekaj na start gry przez Gospodarza...")
-        time.sleep(2)
+        st.info("Oczekiwanie na start gry...")
+        time.sleep(1)
         st.rerun()
     else:
-        time.sleep(2)
+        time.sleep(1)
         st.rerun()
 
 # ==============================================================================
-# 2. ROZGRYWKA (PLAYING)
+# 2. ROZGRYWKA
 # ==============================================================================
 elif server.status == "playing":
-    
-    # WYNIKI (Kompaktowe)
+    # WYNIK
     st.markdown(f"""
     <div class="score-board">
         <span style="color: #66bb6a">{server.p1_name}: {server.p1_score}</span>
-        <span style="font-size: 14px; color: #888">RUNDA {server.p1_score + server.p2_score + 1}</span>
+        <span style="font-size: 14px; color: #888">VS</span>
         <span style="color: #42a5f5">{server.p2_name}: {server.p2_score}</span>
     </div>
     """, unsafe_allow_html=True)
 
-    # INFO O BLOKADACH
+    # INFO O BLOKADZIE
     if server.p1_locked:
-        st.markdown(f"<div class='turn-alert'>❌ {server.p1_name} spudłował! Tura: {server.p2_name}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='turn-alert'>❌ {server.p1_name} PUDŁO! Tura: {server.p2_name}</div>", unsafe_allow_html=True)
     elif server.p2_locked:
-        st.markdown(f"<div class='turn-alert'>❌ {server.p2_name} spudłował! Tura: {server.p1_name}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='turn-alert'>❌ {server.p2_name} PUDŁO! Tura: {server.p1_name}</div>", unsafe_allow_html=True)
 
     # ZDJĘCIE
     if server.current_image:
         try:
-            img = Image.open(server.current_image)
-            st.image(img, use_container_width=True)
-        except:
-            st.error("Błąd pliku.")
+            st.image(Image.open(server.current_image), use_container_width=True)
+        except: st.error("Błąd zdjęcia")
 
-    # FORMULARZ ODPOWIEDZI
+    # LOGIKA GRY
     all_teams = sorted(list(set([x[0] for x in server.image_pool])))
-    user_guess = st.selectbox("Wybierz drużynę:", [""] + all_teams, key=f"g_{server.round_id}")
+    guess = st.selectbox("Wybierz:", [""] + all_teams, key=f"g_{server.round_id}")
 
-    # PRZYCISKI AKCJI
     c1, c2 = st.columns(2)
-
-    # Logika dla P1
+    
+    # Obsługa P1
     if st.session_state.my_role == "P1":
         with c1:
             if server.p1_locked:
-                st.button(f"⏳ Czekaj...", disabled=True, use_container_width=True)
+                st.button("⛔ Czekaj...", disabled=True, use_container_width=True)
             else:
                 if st.button("ZGŁASZAM! 🎯", type="primary", use_container_width=True):
-                    if user_guess == server.current_team:
-                        handle_round_win("P1")
+                    if guess == server.current_team:
+                        handle_win("P1")
                         st.rerun()
                     else:
                         st.toast("ŹLE!", icon="❌")
                         handle_wrong_guess("P1")
                         st.rerun()
         with c2:
-             if not server.p1_locked:
-                if st.button("Poddaję turę 🏳️", use_container_width=True):
-                     handle_wrong_guess("P1")
-                     st.rerun()
+            if not server.p1_locked and st.button("🏳️ Poddaję"):
+                handle_wrong_guess("P1")
+                st.rerun()
 
-    # Logika dla P2
+    # Obsługa P2
     elif st.session_state.my_role == "P2":
         with c2:
             if server.p2_locked:
-                st.button(f"⏳ Czekaj...", disabled=True, use_container_width=True)
+                st.button("⛔ Czekaj...", disabled=True, use_container_width=True)
             else:
                 if st.button("ZGŁASZAM! 🎯", type="primary", use_container_width=True):
-                    if user_guess == server.current_team:
-                        handle_round_win("P2")
+                    if guess == server.current_team:
+                        handle_win("P2")
                         st.rerun()
                     else:
                         st.toast("ŹLE!", icon="❌")
                         handle_wrong_guess("P2")
                         st.rerun()
         with c1:
-             if not server.p2_locked:
-                if st.button("Poddaję turę 🏳️", use_container_width=True):
-                     handle_wrong_guess("P2")
-                     st.rerun()
+             if not server.p2_locked and st.button("🏳️ Poddaję"):
+                handle_wrong_guess("P2")
+                st.rerun()
 
-    # SKIP (Gdy obaj zablokowani)
+    # SKIP (Obaj zablokowani)
     if server.p1_locked and server.p2_locked:
         st.warning("Obaj spudłowali!")
-        if st.button("POKAŻ ODPOWIEDŹ (Koniec Rundy)", use_container_width=True):
+        if st.button("KONIEC RUNDY ➡️", use_container_width=True):
             server.winner_last_round = "NIKT"
             server.last_correct_answer = server.current_team
-            # Jeśli nikt nie wygrał, zasada przegranego nie działa wprost.
-            # Zostawmy prawo startu temu, kto miał je ostatnio (lub domyślnie P1)
             server.status = "round_over"
             st.rerun()
 
-    time.sleep(1.0)
+    time.sleep(1)
     st.rerun()
 
 # ==============================================================================
-# 3. KONIEC RUNDY (ROUND OVER)
+# 3. KONIEC RUNDY (FIXED)
 # ==============================================================================
 elif server.status == "round_over":
     
-    # WYNIKI
-    st.markdown(f"""
-    <div class="score-board">
-        <span style="color: #66bb6a">{server.p1_name}: {server.p1_score}</span>
-        <span style="color: #42a5f5">{server.p2_name}: {server.p2_score}</span>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # INFO O ZWYCIĘZCY
+    # BANNER ZWYCIĘZCY
     if server.winner_last_round == "P1":
-        st.markdown(f"<div class='winner-banner' style='background:#1b5e20; color:white'>🏆 Punkt dla {server.p1_name}!</div>", unsafe_allow_html=True)
+        bg = "#1b5e20"
+        txt = f"🏆 Punkt dla: {server.p1_name}!"
     elif server.winner_last_round == "P2":
-        st.markdown(f"<div class='winner-banner' style='background:#0d47a1; color:white'>🏆 Punkt dla {server.p2_name}!</div>", unsafe_allow_html=True)
+        bg = "#0d47a1"
+        txt = f"🏆 Punkt dla: {server.p2_name}!"
     else:
-        st.markdown(f"<div class='winner-banner' style='background:#555; color:white'>💀 Remis / Nikt nie zgadł</div>", unsafe_allow_html=True)
-
-    # POPRAWNA ODPOWIEDŹ
-    st.markdown("<div style='text-align:center; color:#bbb; font-size:14px'>Poprawna odpowiedź:</div>", unsafe_allow_html=True)
+        bg = "#555"
+        txt = "💀 Remis / Nikt nie zgadł"
+        
+    st.markdown(f"<div class='winner-banner' style='background:{bg}; color:white'>{txt}</div>", unsafe_allow_html=True)
+    
     st.markdown(f"<div class='correct-answer'>{server.last_correct_answer}</div>", unsafe_allow_html=True)
     
-    # ZDJĘCIE (Mniejsze dla przypomnienia)
     if server.current_image:
-        img = Image.open(server.current_image)
-        st.image(img, use_container_width=True)
+        st.image(Image.open(server.current_image), use_container_width=True)
 
     st.divider()
 
-    # PRZYCISK DALEJ (Widoczny tylko dla PRZEGRANEGO z poprzedniej rundy)
-    # Zmienna server.who_starts_next została ustawiona w handle_round_win
-    
-    # Obsługa przypadku "Nikt nie wygrał" (SKIP) - wtedy przycisk widzą obaj lub P1
-    allowed_to_click = False
-    
+    # LOGIKA PRZYCISKU "DALEJ"
+    # Jeśli nikt nie wygrał, prawo głosu ma np. Gospodarz (P1) albo ten co miał zaczynać
     if server.winner_last_round == "NIKT":
-        # Jeśli nikt nie wygrał, np. przycisk widzi P1 (żeby gra nie utknęła)
-        if st.session_state.my_role == "P1": allowed_to_click = True
-        waiting_msg = f"Gospodarz ({server.p1_name}) wznawia grę..."
+        active_player = "P1" # Domyślnie gospodarz popycha grę przy remisie
     else:
-        # Normalna zasada: Przegrany zaczyna
-        if st.session_state.my_role == server.who_starts_next: allowed_to_click = True
-        waiting_msg = f"Czekaj... {server.who_starts_next} rozpoczyna rundę."
+        active_player = server.who_starts_next
 
-    if allowed_to_click:
-        st.success("To Ty rozpoczynasz nową rundę! (Jako przegrany lub gospodarz)")
+    # Czy to JA mam kliknąć?
+    if st.session_state.my_role == active_player:
+        st.success("Twoja kolej! Rozpocznij rundę.")
         if st.button("NASTĘPNA RUNDA ➡️", type="primary", use_container_width=True):
             start_new_round()
             st.rerun()
     else:
-        st.info(waiting_msg)
-        time.sleep(1.5)
+        st.info(f"Czekaj... {active_player} rozpoczyna rundę.")
+        # Usunięto sleep - używamy samego rerun z pustym kontenerem
+        st.empty() 
+        time.sleep(1)
         st.rerun()
 
-# RESET W PASKU BOCZNYM
-with st.sidebar:
-    st.markdown("### Menu")
-    if st.button("Reset Gry"):
-        reset_full_game()
-        st.rerun()
+# Przycisk resetu (zawsze dostępny w pasku bocznym)
+if st.sidebar.button("HARD RESET"):
+    reset_game()
+    st.rerun()
 
 

@@ -5,7 +5,7 @@ import time
 from PIL import Image
 
 # --- KONFIGURACJA STRONY ---
-st.set_page_config(page_title="Football Quiz PRO FINAL", layout="centered", page_icon="⚽")
+st.set_page_config(page_title="Football Quiz FINAL V3", layout="centered", page_icon="⚽")
 
 # --- CSS (WYGLĄD) ---
 st.markdown("""
@@ -51,7 +51,14 @@ st.markdown("""
         background-color: #262730; padding: 20px; border-radius: 10px; margin-top: 10px; border: 1px solid #555;
     }
     
-    /* Ukrycie elementów UI Streamlit */
+    .winner-banner {
+        background-color: #ffd700; color: black; padding: 10px;
+        text-align: center; border-radius: 8px; font-size: 20px; font-weight: bold; margin-bottom: 5px;
+    }
+    .correct-answer {
+        font-size: 22px; color: #4CAF50; text-align: center; font-weight: bold; margin-bottom: 15px;
+    }
+    
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
@@ -71,13 +78,18 @@ class GlobalGameState:
         self.current_image = None
         self.image_pool = []
         self.round_id = 0
+        
+        # Nowe zmienne do logiki czyszczenia i startu
+        self.input_reset_counter = 0  # Licznik do wymuszania resetu pola selectbox
+        self.current_round_starter = "P1" # Kto zaczął tę konkretną rundę
+        
         self.p1_locked = False
         self.p2_locked = False
         self.who_starts_next = "P1"
         self.winner_last_round = None
         self.last_correct_answer = ""
         
-        # Mechanizm Heartbeat (Bicie serca)
+        # Heartbeat
         self.p1_last_seen = time.time()
         self.p2_last_seen = time.time()
         self.disconnect_reason = ""
@@ -94,30 +106,19 @@ if 'my_role' not in st.session_state:
 
 # --- FUNKCJE LOGIKI ---
 def update_heartbeat(role):
-    """Aktualizuje czas ostatniej aktywności gracza."""
-    if role == "P1":
-        server.p1_last_seen = time.time()
-    elif role == "P2":
-        server.p2_last_seen = time.time()
+    if role == "P1": server.p1_last_seen = time.time()
+    elif role == "P2": server.p2_last_seen = time.time()
 
 def check_disconnections():
-    """Sprawdza czy ktoś nie zniknął (timeout 10 sekund)."""
-    # Sprawdzamy tylko w trakcie gry
-    if server.status not in ["playing", "round_over"]:
-        return
-
-    timeout = 8.0 # Sekundy tolerancji na brak sygnału
+    if server.status not in ["playing", "round_over"]: return
+    timeout = 8.0
     now = time.time()
-    
-    # Jeśli P1 zniknął
     if now - server.p1_last_seen > timeout:
         server.status = "disconnected"
-        server.disconnect_reason = f"Gracz {server.p1_name} rozłączył się (zamknął grę)!"
-    
-    # Jeśli P2 zniknął
+        server.disconnect_reason = f"Gracz {server.p1_name} rozłączył się!"
     elif now - server.p2_last_seen > timeout:
         server.status = "disconnected"
-        server.disconnect_reason = f"Gracz {server.p2_name} rozłączył się (zamknął grę)!"
+        server.disconnect_reason = f"Gracz {server.p2_name} rozłączył się!"
 
 def get_available_leagues(folder):
     if not os.path.exists(folder): return []
@@ -135,8 +136,7 @@ def load_images_filtered(folder, selected_leagues):
         match = False
         for part in folder_parts:
             if part.replace("_", " ") in selected_leagues:
-                match = True
-                break
+                match = True; break
         if match:
             for file in files:
                 if file.lower().endswith(('.jpg', '.png', '.jpeg')):
@@ -155,8 +155,15 @@ def start_new_round():
     server.status = "playing"
     server.winner_last_round = None
     server.round_id += 1
+    server.input_reset_counter = 0 # Reset licznika inputu na nową rundę
+    
+    # Zapamiętujemy kto zaczyna tę rundę (żeby w razie remisu oddać głos drugiemu)
+    server.current_round_starter = server.who_starts_next
 
 def handle_wrong_guess(role):
+    # Zwiększamy licznik resetu -> to wymusi wyczyszczenie pola selectbox
+    server.input_reset_counter += 1
+    
     if role == "P1":
         server.p1_locked = True
         server.p2_locked = False
@@ -169,10 +176,10 @@ def handle_win(winner):
     server.last_correct_answer = server.current_team
     if winner == "P1":
         server.p1_score += 1
-        server.who_starts_next = "P2"
+        server.who_starts_next = "P2" # Przegrany zaczyna
     elif winner == "P2":
         server.p2_score += 1
-        server.who_starts_next = "P1"
+        server.who_starts_next = "P1" # Przegrany zaczyna
     server.status = "round_over"
 
 def reset_game():
@@ -189,12 +196,8 @@ def reset_game():
 
 FOLDER_Z_KOSZULKAMI = "."
 
-# --- SERCE SYSTEMU (Heartbeat) ---
-# Wywołujemy to przy każdym odświeżeniu strony przez gracza
 if st.session_state.my_role:
     update_heartbeat(st.session_state.my_role)
-
-# Sprawdzamy czy ktoś nie uciekł
 check_disconnections()
 
 # ==============================================================================
@@ -245,7 +248,6 @@ if server.status == "lobby":
                     if not server.image_pool:
                         st.error("Brak zdjęć!")
                     else:
-                        # Reset czasu przy starcie, żeby nie wyrzuciło od razu
                         server.p1_last_seen = time.time()
                         server.p2_last_seen = time.time()
                         start_new_round()
@@ -254,7 +256,6 @@ if server.status == "lobby":
             st.warning("Czekamy na drugiego gracza...")
             time.sleep(1)
             st.rerun()
-            
     elif st.session_state.my_role == "P2":
         st.info("Oczekiwanie na start gry...")
         time.sleep(1)
@@ -267,7 +268,6 @@ if server.status == "lobby":
 # 2. ROZGRYWKA (PLAYING)
 # ==============================================================================
 elif server.status == "playing":
-    # --- PRZYCISK ZAKOŃCZENIA GRY (Tylko dla P1) ---
     if st.session_state.my_role == "P1":
         if st.sidebar.button("🏁 ZAKOŃCZ GRĘ", type="primary"):
             server.status = "finished"
@@ -291,10 +291,14 @@ elif server.status == "playing":
         except: st.error("Błąd zdjęcia")
 
     all_teams = sorted(list(set([x[0] for x in server.image_pool])))
-    guess = st.selectbox("Wybierz:", [""] + all_teams, key=f"g_{server.round_id}")
+    
+    # --- FIX 1: AUTO-CZYSZCZENIE POLA ---
+    # Dodanie input_reset_counter do klucza wymusza przerysowanie widgetu na czysto przy błędzie
+    guess = st.selectbox("Wybierz:", [""] + all_teams, key=f"g_{server.round_id}_{server.input_reset_counter}")
 
     c1, c2 = st.columns(2)
     
+    # Logika P1
     if st.session_state.my_role == "P1":
         with c1:
             if server.p1_locked:
@@ -313,6 +317,7 @@ elif server.status == "playing":
                 handle_wrong_guess("P1")
                 st.rerun()
 
+    # Logika P2
     elif st.session_state.my_role == "P2":
         with c2:
             if server.p2_locked:
@@ -331,22 +336,27 @@ elif server.status == "playing":
                 handle_wrong_guess("P2")
                 st.rerun()
 
+    # --- FIX 2: LOGIKA "OBAJ SIĘ PODDALI" ---
     if server.p1_locked and server.p2_locked:
-        st.warning("Obaj spudłowali!")
-        if st.button("KONIEC RUNDY ➡️", use_container_width=True):
-            server.winner_last_round = "NIKT"
-            server.last_correct_answer = server.current_team
-            server.status = "round_over"
-            st.rerun()
+        server.winner_last_round = "NIKT"
+        server.last_correct_answer = server.current_team
+        
+        # Logika: Rozpoczyna gracz przeciwny do tego, który zaczynał tę rundę
+        if server.current_round_starter == "P1":
+            server.who_starts_next = "P2"
+        else:
+            server.who_starts_next = "P1"
+            
+        server.status = "round_over"
+        st.rerun()
 
-    time.sleep(1) # Interval odświeżania (Heartbeat + Aktualizacja stanu)
+    time.sleep(1)
     st.rerun()
 
 # ==============================================================================
 # 3. KONIEC RUNDY
 # ==============================================================================
 elif server.status == "round_over":
-    # --- PRZYCISK ZAKOŃCZENIA GRY ---
     if st.session_state.my_role == "P1":
         if st.sidebar.button("🏁 ZAKOŃCZ GRĘ", type="primary"):
             server.status = "finished"
@@ -357,7 +367,7 @@ elif server.status == "round_over":
     elif server.winner_last_round == "P2":
         bg, txt = "#0d47a1", f"🏆 Punkt dla: {server.p2_name}!"
     else:
-        bg, txt = "#555", "💀 Remis / Nikt nie zgadł"
+        bg, txt = "#555", "💀 Nikt nie zgadł (Poddanie)"
         
     st.markdown(f"<div class='winner-banner' style='background:{bg}; color:white'>{txt}</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='correct-answer'>{server.last_correct_answer}</div>", unsafe_allow_html=True)
@@ -366,9 +376,7 @@ elif server.status == "round_over":
 
     st.divider()
 
-    if server.winner_last_round == "NIKT": active_player = "P1"
-    else: active_player = server.who_starts_next
-
+    active_player = server.who_starts_next
     if st.session_state.my_role == active_player:
         st.success("Twoja kolej! Rozpocznij rundę.")
         if st.button("NASTĘPNA RUNDA ➡️", type="primary", use_container_width=True):
@@ -381,12 +389,10 @@ elif server.status == "round_over":
         st.rerun()
 
 # ==============================================================================
-# 4. EKRAN ROZŁĄCZENIA (Ktoś wyszedł)
+# 4. ROZŁĄCZENIE
 # ==============================================================================
 elif server.status == "disconnected":
     st.markdown(f"<div class='game-over-box'>🚨 WALKOWER! 🚨<br>{server.disconnect_reason}</div>", unsafe_allow_html=True)
-    
-    # Podsumowanie wyniku
     st.markdown(f"""
     <div class='summary-box'>
         <h3>Aktualny wynik:</h3>
@@ -394,38 +400,28 @@ elif server.status == "disconnected":
         <p style='color:#42a5f5'>{server.p2_name}: {server.p2_score}</p>
     </div>
     """, unsafe_allow_html=True)
-    
     if st.button("WRÓĆ DO LOBBY 🏠", type="primary"):
         reset_game()
         st.rerun()
-        
     time.sleep(2)
     st.rerun()
 
 # ==============================================================================
-# 5. EKRAN ZAKOŃCZENIA (Manualne)
+# 5. KONIEC MECZU
 # ==============================================================================
 elif server.status == "finished":
     st.markdown("<div class='game-over-box' style='background-color:#2e7d32'>🏁 KONIEC MECZU 🏁</div>", unsafe_allow_html=True)
-    
-    # Wyłonienie zwycięzcy
     if server.p1_score > server.p2_score:
-        msg = f"🏆 WYGRYWA: {server.p1_name}!"
-        color = "#66bb6a"
+        msg, color = f"🏆 WYGRYWA: {server.p1_name}!", "#66bb6a"
     elif server.p2_score > server.p1_score:
-        msg = f"🏆 WYGRYWA: {server.p2_name}!"
-        color = "#42a5f5"
+        msg, color = f"🏆 WYGRYWA: {server.p2_name}!", "#42a5f5"
     else:
-        msg = "🤝 REMIS!"
-        color = "#ffffff"
+        msg, color = "🤝 REMIS!", "#ffffff"
 
     st.markdown(f"<h1 style='text-align:center; color:{color}'>{msg}</h1>", unsafe_allow_html=True)
-    
     st.markdown(f"""
     <div class='summary-box' style='text-align:center'>
-        <h2>WYNIK KOŃCOWY</h2>
         <h1>{server.p1_score} - {server.p2_score}</h1>
-        <p>{server.p1_name} vs {server.p2_name}</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -433,9 +429,9 @@ elif server.status == "finished":
         reset_game()
         st.rerun()
 
-# RESET W PASKU BOCZNYM
 if st.sidebar.button("HARD RESET SERWERA"):
     reset_game()
     st.rerun()
+
 
 

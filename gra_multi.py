@@ -5,7 +5,7 @@ import time
 from PIL import Image
 
 # --- KONFIGURACJA STRONY ---
-st.set_page_config(page_title="Football Quiz FINAL V3", layout="centered", page_icon="⚽")
+st.set_page_config(page_title="Football Quiz FINAL V4", layout="centered", page_icon="⚽")
 
 # --- CSS (WYGLĄD) ---
 st.markdown("""
@@ -17,7 +17,6 @@ st.markdown("""
     }
     .stApp { background-color: #0e1117; }
     
-    /* Tablica wyników */
     .score-board {
         display: flex; justify-content: space-between; align-items: center;
         background: #262730; padding: 10px 15px; border-radius: 8px;
@@ -25,24 +24,20 @@ st.markdown("""
         border: 1px solid #444; margin-bottom: 10px;
     }
     
-    /* Zdjęcie */
     img {
         max-height: 350px !important;
         object-fit: contain;
         border-radius: 8px;
     }
     
-    /* Karty graczy */
     .player-box {
         text-align: center; padding: 5px; border-radius: 5px; width: 100%; font-weight: bold; font-size: 14px;
     }
     .p1-box { background-color: #1b5e20; color: #a5d6a7; border: 1px solid #2e7d32; }
     .p2-box { background-color: #0d47a1; color: #90caf9; border: 1px solid #1565c0; }
     
-    /* Alerty */
     .turn-alert { text-align: center; color: #ffca28; font-weight: bold; font-size: 15px; margin: 5px 0; }
     
-    /* Koniec gry / Walkower */
     .game-over-box {
         background-color: #b71c1c; color: white; padding: 20px; text-align: center;
         border-radius: 10px; font-size: 24px; font-weight: bold; margin-top: 20px;
@@ -72,16 +67,15 @@ class GlobalGameState:
         self.p2_name = None
         self.p1_score = 0
         self.p2_score = 0
-        self.status = "lobby" # lobby, playing, round_over, finished, disconnected
+        self.status = "lobby" 
         
         self.current_team = None
         self.current_image = None
         self.image_pool = []
         self.round_id = 0
         
-        # Nowe zmienne do logiki czyszczenia i startu
-        self.input_reset_counter = 0  # Licznik do wymuszania resetu pola selectbox
-        self.current_round_starter = "P1" # Kto zaczął tę konkretną rundę
+        self.input_reset_counter = 0 
+        self.current_round_starter = "P1" 
         
         self.p1_locked = False
         self.p2_locked = False
@@ -89,7 +83,6 @@ class GlobalGameState:
         self.winner_last_round = None
         self.last_correct_answer = ""
         
-        # Heartbeat
         self.p1_last_seen = time.time()
         self.p2_last_seen = time.time()
         self.disconnect_reason = ""
@@ -155,15 +148,12 @@ def start_new_round():
     server.status = "playing"
     server.winner_last_round = None
     server.round_id += 1
-    server.input_reset_counter = 0 # Reset licznika inputu na nową rundę
-    
-    # Zapamiętujemy kto zaczyna tę rundę (żeby w razie remisu oddać głos drugiemu)
+    server.input_reset_counter = 0 
     server.current_round_starter = server.who_starts_next
 
 def handle_wrong_guess(role):
-    # Zwiększamy licznik resetu -> to wymusi wyczyszczenie pola selectbox
+    """Logika: Błędny strzał -> blokuje mnie, ODBLOKOWUJE przeciwnika"""
     server.input_reset_counter += 1
-    
     if role == "P1":
         server.p1_locked = True
         server.p2_locked = False
@@ -171,15 +161,25 @@ def handle_wrong_guess(role):
         server.p2_locked = True
         server.p1_locked = False
 
+def handle_surrender(role):
+    """Logika: Poddanie -> blokuje mnie, NIE RUSZA przeciwnika"""
+    server.input_reset_counter += 1
+    if role == "P1":
+        server.p1_locked = True
+        # Nie odblokowujemy P2! Jeśli P2 też się poddał, to obaj będą True -> koniec rundy
+    else:
+        server.p2_locked = True
+        # Nie odblokowujemy P1!
+
 def handle_win(winner):
     server.winner_last_round = winner
     server.last_correct_answer = server.current_team
     if winner == "P1":
         server.p1_score += 1
-        server.who_starts_next = "P2" # Przegrany zaczyna
+        server.who_starts_next = "P2"
     elif winner == "P2":
         server.p2_score += 1
-        server.who_starts_next = "P1" # Przegrany zaczyna
+        server.who_starts_next = "P1"
     server.status = "round_over"
 
 def reset_game():
@@ -201,7 +201,7 @@ if st.session_state.my_role:
 check_disconnections()
 
 # ==============================================================================
-# 1. LOBBY
+# LOBBY
 # ==============================================================================
 if server.status == "lobby":
     st.markdown("<h2 style='text-align: center;'>🏆 LOBBY</h2>", unsafe_allow_html=True)
@@ -265,7 +265,7 @@ if server.status == "lobby":
         st.rerun()
 
 # ==============================================================================
-# 2. ROZGRYWKA (PLAYING)
+# ROZGRYWKA (PLAYING)
 # ==============================================================================
 elif server.status == "playing":
     if st.session_state.my_role == "P1":
@@ -282,9 +282,9 @@ elif server.status == "playing":
     """, unsafe_allow_html=True)
 
     if server.p1_locked:
-        st.markdown(f"<div class='turn-alert'>❌ {server.p1_name} PUDŁO! Tura: {server.p2_name}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='turn-alert'>❌ {server.p1_name} PUDŁO/PAS! Tura: {server.p2_name}</div>", unsafe_allow_html=True)
     elif server.p2_locked:
-        st.markdown(f"<div class='turn-alert'>❌ {server.p2_name} PUDŁO! Tura: {server.p1_name}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='turn-alert'>❌ {server.p2_name} PUDŁO/PAS! Tura: {server.p1_name}</div>", unsafe_allow_html=True)
 
     if server.current_image:
         try: st.image(Image.open(server.current_image), use_container_width=True)
@@ -292,8 +292,6 @@ elif server.status == "playing":
 
     all_teams = sorted(list(set([x[0] for x in server.image_pool])))
     
-    # --- FIX 1: AUTO-CZYSZCZENIE POLA ---
-    # Dodanie input_reset_counter do klucza wymusza przerysowanie widgetu na czysto przy błędzie
     guess = st.selectbox("Wybierz:", [""] + all_teams, key=f"g_{server.round_id}_{server.input_reset_counter}")
 
     c1, c2 = st.columns(2)
@@ -313,8 +311,9 @@ elif server.status == "playing":
                         handle_wrong_guess("P1")
                         st.rerun()
         with c2:
+            # FIX: Używamy handle_surrender zamiast handle_wrong_guess
             if not server.p1_locked and st.button("🏳️ Poddaję"):
-                handle_wrong_guess("P1")
+                handle_surrender("P1")
                 st.rerun()
 
     # Logika P2
@@ -332,11 +331,12 @@ elif server.status == "playing":
                         handle_wrong_guess("P2")
                         st.rerun()
         with c1:
+             # FIX: Używamy handle_surrender zamiast handle_wrong_guess
              if not server.p2_locked and st.button("🏳️ Poddaję"):
-                handle_wrong_guess("P2")
+                handle_surrender("P2")
                 st.rerun()
 
-    # --- FIX 2: LOGIKA "OBAJ SIĘ PODDALI" ---
+    # --- FIX: LOGIKA PODDANIA (OBAJ ZABLOKOWANI) ---
     if server.p1_locked and server.p2_locked:
         server.winner_last_round = "NIKT"
         server.last_correct_answer = server.current_team
@@ -354,7 +354,7 @@ elif server.status == "playing":
     st.rerun()
 
 # ==============================================================================
-# 3. KONIEC RUNDY
+# KONIEC RUNDY
 # ==============================================================================
 elif server.status == "round_over":
     if st.session_state.my_role == "P1":
@@ -389,7 +389,7 @@ elif server.status == "round_over":
         st.rerun()
 
 # ==============================================================================
-# 4. ROZŁĄCZENIE
+# ROZŁĄCZENIE
 # ==============================================================================
 elif server.status == "disconnected":
     st.markdown(f"<div class='game-over-box'>🚨 WALKOWER! 🚨<br>{server.disconnect_reason}</div>", unsafe_allow_html=True)
@@ -407,7 +407,7 @@ elif server.status == "disconnected":
     st.rerun()
 
 # ==============================================================================
-# 5. KONIEC MECZU
+# KONIEC MECZU
 # ==============================================================================
 elif server.status == "finished":
     st.markdown("<div class='game-over-box' style='background-color:#2e7d32'>🏁 KONIEC MECZU 🏁</div>", unsafe_allow_html=True)

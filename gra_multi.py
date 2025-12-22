@@ -1,20 +1,3 @@
-Rozumiem, to są błędy wynikające z tego, jak Streamlit odświeża zmienne ("state") oraz jak przetwarza listy wyboru.
-
-Oto poprawiona wersja FINAL V2, która naprawia te dwa konkretne problemy:
-
-Naprawa Startu Gry: Zmieniłem logikę przycisku "Start". Teraz kod sprawdza wybrane ligi zanim klikniesz przycisk, dzięki czemu nie musisz nic "odklikiwać", żeby gra ruszyła. Działa od razu na domyślnych ustawieniach.
-
-Naprawa Okna "Następna Runda":
-
-Usunąłem opóźnienia (sleep), które powodowały, że komunikaty wisiały za długo.
-
-Zmieniłem wygląd komunikatu oczekiwania na subtelniejszy.
-
-Przycisk "Następna Runda" jest teraz jedynym dużym elementem, który znika natychmiast po kliknięciu.
-
-KOD (Podmień całość w gra_multi.py)
-Python
-
 import streamlit as st
 import os
 import random
@@ -376,5 +359,6 @@ elif server.status == "round_over":
 if st.sidebar.button("HARD RESET"):
     reset_game()
     st.rerun()
+
 
 

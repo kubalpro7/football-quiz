@@ -5,7 +5,7 @@ import time
 from PIL import Image
 
 # --- KONFIGURACJA STRONY ---
-st.set_page_config(page_title="Football Quiz FINAL V5", layout="centered", page_icon="⚽")
+st.set_page_config(page_title="Football Quiz FINAL V6", layout="centered", page_icon="⚽")
 
 # --- CSS (WYGLĄD) ---
 st.markdown("""
@@ -13,10 +13,11 @@ st.markdown("""
     .block-container {
         padding-top: 1rem !important;
         padding-bottom: 2rem !important;
-        max-width: 700px;
+        max-width: 750px;
     }
     .stApp { background-color: #0e1117; }
     
+    /* Tablica wyników */
     .score-board {
         display: flex; justify-content: space-between; align-items: center;
         background: #262730; padding: 10px 15px; border-radius: 8px;
@@ -24,28 +25,24 @@ st.markdown("""
         border: 1px solid #444; margin-bottom: 10px;
     }
     
+    /* Zdjęcie */
     img {
         max-height: 350px !important;
         object-fit: contain;
         border-radius: 8px;
     }
     
+    /* Karty graczy */
     .player-box {
         text-align: center; padding: 5px; border-radius: 5px; width: 100%; font-weight: bold; font-size: 14px;
     }
     .p1-box { background-color: #1b5e20; color: #a5d6a7; border: 1px solid #2e7d32; }
     .p2-box { background-color: #0d47a1; color: #90caf9; border: 1px solid #1565c0; }
     
+    /* Alerty */
     .turn-alert { text-align: center; color: #ffca28; font-weight: bold; font-size: 15px; margin: 5px 0; }
     
-    .game-over-box {
-        background-color: #b71c1c; color: white; padding: 20px; text-align: center;
-        border-radius: 10px; font-size: 24px; font-weight: bold; margin-top: 20px;
-    }
-    .summary-box {
-        background-color: #262730; padding: 20px; border-radius: 10px; margin-top: 10px; border: 1px solid #555;
-    }
-    
+    /* Banner zwycięzcy */
     .winner-banner {
         background-color: #ffd700; color: black; padding: 10px;
         text-align: center; border-radius: 8px; font-size: 20px; font-weight: bold; margin-bottom: 5px;
@@ -53,10 +50,15 @@ st.markdown("""
     .correct-answer {
         font-size: 22px; color: #4CAF50; text-align: center; font-weight: bold; margin-bottom: 15px;
     }
-    
+
+    /* Ukrycie domyślnego menu Streamlit */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
+    
+    /* Zmniejszenie odstępów w formularzu */
+    .stForm { margin-top: 0px; }
+    div[data-testid="stForm"] { border: none; padding: 0; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -162,10 +164,8 @@ def handle_wrong_guess(role):
 
 def handle_surrender(role):
     server.input_reset_counter += 1
-    if role == "P1":
-        server.p1_locked = True
-    else:
-        server.p2_locked = True
+    if role == "P1": server.p1_locked = True
+    else: server.p2_locked = True
 
 def handle_win(winner):
     server.winner_last_round = winner
@@ -197,7 +197,7 @@ if st.session_state.my_role:
 check_disconnections()
 
 # ==============================================================================
-# LOBBY (Tylko tutaj wybieramy ligi!)
+# 1. LOBBY
 # ==============================================================================
 if server.status == "lobby":
     st.markdown("<h2 style='text-align: center;'>🏆 LOBBY</h2>", unsafe_allow_html=True)
@@ -230,7 +230,7 @@ if server.status == "lobby":
 
     st.divider()
 
-    # KONFIGURACJA I START (Widoczne tylko w Lobby!)
+    # KONFIGURACJA (Tylko w Lobby!)
     if st.session_state.my_role == "P1":
         st.subheader("⚙️ Ustawienia")
         all_leagues = get_available_leagues(FOLDER_Z_KOSZULKAMI)
@@ -262,7 +262,7 @@ if server.status == "lobby":
         st.rerun()
 
 # ==============================================================================
-# ROZGRYWKA (PLAYING)
+# 2. ROZGRYWKA (PLAYING)
 # ==============================================================================
 elif server.status == "playing":
     # WYNIK
@@ -274,67 +274,71 @@ elif server.status == "playing":
     </div>
     """, unsafe_allow_html=True)
 
-    # ALERTY TURY
+    # ALERTY
     if server.p1_locked:
-        st.markdown(f"<div class='turn-alert'>❌ {server.p1_name} PUDŁO/PAS! Tura: {server.p2_name}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='turn-alert'>❌ {server.p1_name} PUDŁO! Tura: {server.p2_name}</div>", unsafe_allow_html=True)
     elif server.p2_locked:
-        st.markdown(f"<div class='turn-alert'>❌ {server.p2_name} PUDŁO/PAS! Tura: {server.p1_name}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='turn-alert'>❌ {server.p2_name} PUDŁO! Tura: {server.p1_name}</div>", unsafe_allow_html=True)
 
     # ZDJĘCIE
     if server.current_image:
         try: st.image(Image.open(server.current_image), use_container_width=True)
         except: st.error("Błąd zdjęcia")
 
-    # POLE WYBORU
-    all_teams = sorted(list(set([x[0] for x in server.image_pool])))
-    guess = st.selectbox("Wybierz:", [""] + all_teams, key=f"g_{server.round_id}_{server.input_reset_counter}")
+    # UŻYCIE FORMULARZA ABY ENTER DZIAŁAŁ
+    # Klucz formularza musi być unikalny per reset inputu
+    with st.form(key=f"game_form_{server.round_id}_{server.input_reset_counter}"):
+        
+        # 1. Pole wyboru (wciśnięcie Enter w tym polu uruchomi pierwszy submit_button)
+        all_teams = sorted(list(set([x[0] for x in server.image_pool])))
+        guess = st.selectbox("Wybierz drużynę i wciśnij ENTER:", [""] + all_teams)
 
-    c1, c2 = st.columns(2)
+        # 2. Przyciski w jednej linii (Używamy kolumn wewnątrz formularza)
+        if st.session_state.my_role == "P1":
+            # Dla P1: Zgłaszam | Poddaję | Koniec Gry
+            c1, c2, c3 = st.columns([2, 1, 1])
+            with c1:
+                submit_guess = st.form_submit_button("ZGŁASZAM 🎯", type="primary", use_container_width=True, disabled=server.p1_locked)
+            with c2:
+                submit_surrender = st.form_submit_button("Poddaję 🏳️", use_container_width=True, disabled=server.p1_locked)
+            with c3:
+                submit_end = st.form_submit_button("🏁 KONIEC", type="secondary", use_container_width=True)
+        else:
+            # Dla P2: Zgłaszam | Poddaję
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                submit_guess = st.form_submit_button("ZGŁASZAM 🎯", type="primary", use_container_width=True, disabled=server.p2_locked)
+            with c2:
+                submit_surrender = st.form_submit_button("Poddaję 🏳️", use_container_width=True, disabled=server.p2_locked)
+            submit_end = False
+
+    # OBSŁUGA AKCJI PO KLIKNIĘCIU (LUB ENTER)
     
-    # --- LOGIKA P1 ---
-    if st.session_state.my_role == "P1":
-        with c1:
-            if server.p1_locked:
-                st.button("⛔ Czekaj...", disabled=True, use_container_width=True)
-            else:
-                if st.button("ZGŁASZAM! 🎯", type="primary", use_container_width=True):
-                    if guess == server.current_team:
-                        handle_win("P1")
-                        st.rerun()
-                    else:
-                        st.toast("ŹLE!", icon="❌")
-                        handle_wrong_guess("P1")
-                        st.rerun()
-        with c2:
-            # PRZYCISK PODDAJĘ
-            if not server.p1_locked and st.button("🏳️ Poddaję", use_container_width=True):
-                handle_surrender("P1")
+    # Obsługa Końca Gry (Tylko P1)
+    if st.session_state.my_role == "P1" and submit_end:
+        server.status = "finished"
+        st.rerun()
+
+    # Obsługa Zgłoszenia
+    if submit_guess:
+        role = st.session_state.my_role
+        # Sprawdzamy czy gracz nie jest zablokowany (zabezpieczenie backendowe)
+        is_locked = server.p1_locked if role == "P1" else server.p2_locked
+        
+        if not is_locked:
+            if guess == server.current_team:
+                handle_win(role)
                 st.rerun()
-            
-            # --- PRZYCISK KOŃCA GRY (DODANY TUTAJ) ---
-            st.markdown("---")
-            if st.button("🏁 KONIEC GRY", type="primary", use_container_width=True):
-                server.status = "finished"
+            else:
+                st.toast("ŹLE! Blokada!", icon="❌")
+                handle_wrong_guess(role)
                 st.rerun()
 
-    # --- LOGIKA P2 ---
-    elif st.session_state.my_role == "P2":
-        with c2:
-            if server.p2_locked:
-                st.button("⛔ Czekaj...", disabled=True, use_container_width=True)
-            else:
-                if st.button("ZGŁASZAM! 🎯", type="primary", use_container_width=True):
-                    if guess == server.current_team:
-                        handle_win("P2")
-                        st.rerun()
-                    else:
-                        st.toast("ŹLE!", icon="❌")
-                        handle_wrong_guess("P2")
-                        st.rerun()
-        with c1:
-             if not server.p2_locked and st.button("🏳️ Poddaję", use_container_width=True):
-                handle_surrender("P2")
-                st.rerun()
+    # Obsługa Poddania
+    if submit_surrender:
+        role = st.session_state.my_role
+        handle_surrender(role)
+        st.rerun()
 
     # OBAJ ZABLOKOWANI -> KONIEC RUNDY
     if server.p1_locked and server.p2_locked:
@@ -351,10 +355,10 @@ elif server.status == "playing":
     st.rerun()
 
 # ==============================================================================
-# KONIEC RUNDY
+# 3. KONIEC RUNDY
 # ==============================================================================
 elif server.status == "round_over":
-    # Przycisk końca gry dla P1 dostępny też tutaj
+    # W sekcji Round Over przyciski też muszą być widoczne
     if st.session_state.my_role == "P1":
         if st.sidebar.button("🏁 ZAKOŃCZ GRĘ", type="primary"):
             server.status = "finished"
@@ -387,15 +391,15 @@ elif server.status == "round_over":
         st.rerun()
 
 # ==============================================================================
-# ROZŁĄCZENIE
+# 4. ROZŁĄCZENIE / WALKOWER
 # ==============================================================================
 elif server.status == "disconnected":
     st.markdown(f"<div class='game-over-box'>🚨 WALKOWER! 🚨<br>{server.disconnect_reason}</div>", unsafe_allow_html=True)
     st.markdown(f"""
-    <div class='summary-box'>
+    <div style='background-color:#262730; padding:20px; border-radius:10px; margin-top:10px; text-align:center;'>
         <h3>Aktualny wynik:</h3>
-        <p style='color:#66bb6a'>{server.p1_name}: {server.p1_score}</p>
-        <p style='color:#42a5f5'>{server.p2_name}: {server.p2_score}</p>
+        <p style='color:#66bb6a; font-size:20px'>{server.p1_name}: {server.p1_score}</p>
+        <p style='color:#42a5f5; font-size:20px'>{server.p2_name}: {server.p2_score}</p>
     </div>
     """, unsafe_allow_html=True)
     if st.button("WRÓĆ DO LOBBY 🏠", type="primary"):
@@ -405,7 +409,7 @@ elif server.status == "disconnected":
     st.rerun()
 
 # ==============================================================================
-# KONIEC MECZU
+# 5. KONIEC MECZU (MANUALNY)
 # ==============================================================================
 elif server.status == "finished":
     st.markdown("<div class='game-over-box' style='background-color:#2e7d32'>🏁 KONIEC MECZU 🏁</div>", unsafe_allow_html=True)
@@ -418,7 +422,7 @@ elif server.status == "finished":
 
     st.markdown(f"<h1 style='text-align:center; color:{color}'>{msg}</h1>", unsafe_allow_html=True)
     st.markdown(f"""
-    <div class='summary-box' style='text-align:center'>
+    <div style='background-color:#262730; padding:20px; border-radius:10px; margin-top:10px; text-align:center;'>
         <h1>{server.p1_score} - {server.p2_score}</h1>
     </div>
     """, unsafe_allow_html=True)

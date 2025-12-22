@@ -5,7 +5,7 @@ import time
 from PIL import Image
 
 # --- KONFIGURACJA STRONY ---
-st.set_page_config(page_title="Football Quiz FINAL V4", layout="centered", page_icon="⚽")
+st.set_page_config(page_title="Football Quiz FINAL V5", layout="centered", page_icon="⚽")
 
 # --- CSS (WYGLĄD) ---
 st.markdown("""
@@ -152,7 +152,6 @@ def start_new_round():
     server.current_round_starter = server.who_starts_next
 
 def handle_wrong_guess(role):
-    """Logika: Błędny strzał -> blokuje mnie, ODBLOKOWUJE przeciwnika"""
     server.input_reset_counter += 1
     if role == "P1":
         server.p1_locked = True
@@ -162,14 +161,11 @@ def handle_wrong_guess(role):
         server.p1_locked = False
 
 def handle_surrender(role):
-    """Logika: Poddanie -> blokuje mnie, NIE RUSZA przeciwnika"""
     server.input_reset_counter += 1
     if role == "P1":
         server.p1_locked = True
-        # Nie odblokowujemy P2! Jeśli P2 też się poddał, to obaj będą True -> koniec rundy
     else:
         server.p2_locked = True
-        # Nie odblokowujemy P1!
 
 def handle_win(winner):
     server.winner_last_round = winner
@@ -201,7 +197,7 @@ if st.session_state.my_role:
 check_disconnections()
 
 # ==============================================================================
-# LOBBY
+# LOBBY (Tylko tutaj wybieramy ligi!)
 # ==============================================================================
 if server.status == "lobby":
     st.markdown("<h2 style='text-align: center;'>🏆 LOBBY</h2>", unsafe_allow_html=True)
@@ -234,6 +230,7 @@ if server.status == "lobby":
 
     st.divider()
 
+    # KONFIGURACJA I START (Widoczne tylko w Lobby!)
     if st.session_state.my_role == "P1":
         st.subheader("⚙️ Ustawienia")
         all_leagues = get_available_leagues(FOLDER_Z_KOSZULKAMI)
@@ -268,11 +265,7 @@ if server.status == "lobby":
 # ROZGRYWKA (PLAYING)
 # ==============================================================================
 elif server.status == "playing":
-    if st.session_state.my_role == "P1":
-        if st.sidebar.button("🏁 ZAKOŃCZ GRĘ", type="primary"):
-            server.status = "finished"
-            st.rerun()
-
+    # WYNIK
     st.markdown(f"""
     <div class="score-board">
         <span style="color: #66bb6a">{server.p1_name}: {server.p1_score}</span>
@@ -281,22 +274,24 @@ elif server.status == "playing":
     </div>
     """, unsafe_allow_html=True)
 
+    # ALERTY TURY
     if server.p1_locked:
         st.markdown(f"<div class='turn-alert'>❌ {server.p1_name} PUDŁO/PAS! Tura: {server.p2_name}</div>", unsafe_allow_html=True)
     elif server.p2_locked:
         st.markdown(f"<div class='turn-alert'>❌ {server.p2_name} PUDŁO/PAS! Tura: {server.p1_name}</div>", unsafe_allow_html=True)
 
+    # ZDJĘCIE
     if server.current_image:
         try: st.image(Image.open(server.current_image), use_container_width=True)
         except: st.error("Błąd zdjęcia")
 
+    # POLE WYBORU
     all_teams = sorted(list(set([x[0] for x in server.image_pool])))
-    
     guess = st.selectbox("Wybierz:", [""] + all_teams, key=f"g_{server.round_id}_{server.input_reset_counter}")
 
     c1, c2 = st.columns(2)
     
-    # Logika P1
+    # --- LOGIKA P1 ---
     if st.session_state.my_role == "P1":
         with c1:
             if server.p1_locked:
@@ -311,12 +306,18 @@ elif server.status == "playing":
                         handle_wrong_guess("P1")
                         st.rerun()
         with c2:
-            # FIX: Używamy handle_surrender zamiast handle_wrong_guess
-            if not server.p1_locked and st.button("🏳️ Poddaję"):
+            # PRZYCISK PODDAJĘ
+            if not server.p1_locked and st.button("🏳️ Poddaję", use_container_width=True):
                 handle_surrender("P1")
                 st.rerun()
+            
+            # --- PRZYCISK KOŃCA GRY (DODANY TUTAJ) ---
+            st.markdown("---")
+            if st.button("🏁 KONIEC GRY", type="primary", use_container_width=True):
+                server.status = "finished"
+                st.rerun()
 
-    # Logika P2
+    # --- LOGIKA P2 ---
     elif st.session_state.my_role == "P2":
         with c2:
             if server.p2_locked:
@@ -331,22 +332,18 @@ elif server.status == "playing":
                         handle_wrong_guess("P2")
                         st.rerun()
         with c1:
-             # FIX: Używamy handle_surrender zamiast handle_wrong_guess
-             if not server.p2_locked and st.button("🏳️ Poddaję"):
+             if not server.p2_locked and st.button("🏳️ Poddaję", use_container_width=True):
                 handle_surrender("P2")
                 st.rerun()
 
-    # --- FIX: LOGIKA PODDANIA (OBAJ ZABLOKOWANI) ---
+    # OBAJ ZABLOKOWANI -> KONIEC RUNDY
     if server.p1_locked and server.p2_locked:
         server.winner_last_round = "NIKT"
         server.last_correct_answer = server.current_team
-        
-        # Logika: Rozpoczyna gracz przeciwny do tego, który zaczynał tę rundę
         if server.current_round_starter == "P1":
             server.who_starts_next = "P2"
         else:
             server.who_starts_next = "P1"
-            
         server.status = "round_over"
         st.rerun()
 
@@ -357,6 +354,7 @@ elif server.status == "playing":
 # KONIEC RUNDY
 # ==============================================================================
 elif server.status == "round_over":
+    # Przycisk końca gry dla P1 dostępny też tutaj
     if st.session_state.my_role == "P1":
         if st.sidebar.button("🏁 ZAKOŃCZ GRĘ", type="primary"):
             server.status = "finished"

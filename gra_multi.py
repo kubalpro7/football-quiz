@@ -8,7 +8,7 @@ from PIL import Image
 # ==============================================================================
 # 1. KONFIGURACJA
 # ==============================================================================
-st.set_page_config(page_title="Football Quiz V10", layout="centered", page_icon="⚽")
+st.set_page_config(page_title="Football Quiz V11", layout="centered", page_icon="⚽")
 
 # CSS - Czysty wygląd
 st.markdown("""
@@ -29,9 +29,9 @@ st.markdown("""
     .p2-box { background-color: #0d47a1; color: #90caf9; }
     .turn-alert { text-align: center; color: #ffca28; font-weight: bold; font-size: 18px; margin: 10px 0; }
     
-    /* Wymuszenie układu przycisków */
+    /* Wymuszenie układu przycisków w jednej linii */
     div[data-testid="column"] { display: flex; align-items: center; justify-content: center; }
-    button { height: 50px !important; }
+    button { height: 50px !important; width: 100% !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -75,9 +75,10 @@ def update_heartbeat(role):
 
 def check_disconnections():
     if server.status not in ["playing", "round_over"]: return
-    if time.time() - server.p1_last_seen > 12.0:
+    # Timeout 15 sekund
+    if time.time() - server.p1_last_seen > 15.0:
         server.status = "disconnected"; server.disconnect_reason = f"{server.p1_name} uciekł!"
-    elif time.time() - server.p2_last_seen > 12.0:
+    elif time.time() - server.p2_last_seen > 15.0:
         server.status = "disconnected"; server.disconnect_reason = f"{server.p2_name} uciekł!"
 
 def get_leagues(folder):
@@ -88,7 +89,6 @@ def load_images(folder, selected):
     server.image_pool = []
     if not os.path.exists(folder): return
     for root, dirs, files in os.walk(folder):
-        # Sprawdź czy folder jest w wybranych ligach
         path_parts = root.split(os.sep)
         if any(part.replace("_", " ") in selected for part in path_parts):
             for f in files:
@@ -111,17 +111,17 @@ def start_round():
     server.current_round_starter = server.who_starts_next
 
 def reset_all():
-    server.__init__() # Reset stanu serwera
+    server.__init__() 
     st.rerun()
 
 FOLDER = "."
 
 # ==============================================================================
-# 4. WIDOKI (MODUŁOWE - GWARANCJA NIE NAKŁADANIA SIĘ)
+# 4. WIDOKI (Renderowane wewnątrz Main Placeholder)
 # ==============================================================================
 
 def render_lobby():
-    st.markdown("<h1 style='text-align: center;'>🏆 LOBBY (V10)</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>🏆 LOBBY</h1>", unsafe_allow_html=True)
     
     c1, c2 = st.columns(2)
     with c1:
@@ -141,15 +141,15 @@ def render_lobby():
 
     st.divider()
 
-    # Logika startu TYLKO wewnątrz tej funkcji render_lobby
+    # WYBÓR LIG - Tylko tutaj!
     if st.session_state.my_role == "P1":
         st.subheader("⚙️ Ustawienia")
         leagues = get_leagues(FOLDER)
-        sel = st.multiselect("Ligi:", leagues, default=leagues)
+        sel = st.multiselect("Wybierz ligi:", leagues, default=leagues)
         
         st.write("")
         if server.p1_name and server.p2_name:
-            if st.button("START MECZU 🚀", type="primary", use_container_width=True):
+            if st.button("START MECZU 🚀", type="primary"):
                 if not sel: st.error("Wybierz ligę!")
                 else:
                     load_images(FOLDER, sel)
@@ -158,7 +158,7 @@ def render_lobby():
                         start_round()
                         st.rerun()
         else:
-            st.warning("Czekamy na P2...")
+            st.warning("Czekamy na drugiego gracza...")
             time.sleep(1); st.rerun()
     elif st.session_state.my_role == "P2":
         st.info("Czekamy na start..."); time.sleep(1); st.rerun()
@@ -198,11 +198,13 @@ def render_playing():
             guess = st.selectbox("Klub:", [""] + teams)
         
         st.write("")
+        
+        # Przyciski w jednej linii (układ 3, 1, 1)
         c1, c2, c3 = st.columns([3, 1, 1])
-        with c1: sub_guess = st.form_submit_button("ZGŁASZAM 🎯", type="primary", use_container_width=True)
-        with c2: sub_surr = st.form_submit_button("🏳️", use_container_width=True, help="Poddaję")
+        with c1: sub_guess = st.form_submit_button("ZGŁASZAM 🎯", type="primary")
+        with c2: sub_surr = st.form_submit_button("🏳️", help="Poddaję")
         with c3:
-            if st.session_state.my_role == "P1": sub_end = st.form_submit_button("🏁", type="secondary", use_container_width=True)
+            if st.session_state.my_role == "P1": sub_end = st.form_submit_button("🏁", type="secondary", help="Zakończ Grę")
             else: sub_end = False
 
     # Logika akcji
@@ -214,7 +216,6 @@ def render_playing():
     if sub_guess and guess:
         locked = server.p1_locked if role == "P1" else server.p2_locked
         if not locked:
-            # Sprawdzanie
             match = False
             if guess == server.current_team: match = True
             else:
@@ -270,7 +271,7 @@ def render_round_over():
     act = server.who_starts_next
     if st.session_state.my_role == act:
         st.success("Twoja kolej!")
-        if st.button("NASTĘPNA RUNDA ➡️", type="primary", use_container_width=True):
+        if st.button("NASTĘPNA RUNDA ➡️", type="primary"):
             start_round(); st.rerun()
     else:
         st.info(f"Czekaj na {act}..."); time.sleep(1); st.rerun()
@@ -285,30 +286,34 @@ def render_disconnected():
     if st.button("RESET"): reset_all()
 
 # ==============================================================================
-# 5. MAIN
+# 5. MAIN (KONTENER - GWARANCJA CZYSTOŚCI)
 # ==============================================================================
 def main():
     if 'my_role' not in st.session_state: st.session_state.my_role = None
     if 'input_mode' not in st.session_state: st.session_state.input_mode = True
 
-    # Pasek boczny DEBUG - Jeśli tego nie widzisz, kod się nie zaktualizował!
-    st.sidebar.title("WERSJA V10") 
+    # Pasek boczny DEBUG
+    st.sidebar.title("WERSJA V11 (PANCERNA)")
+    st.sidebar.caption(f"Status: {server.status}") # To pokaże Ci w jakim stanie jest gra
     if st.sidebar.button("HARD RESET"): reset_all()
 
     if st.session_state.my_role: update_heartbeat(st.session_state.my_role)
     check_disconnections()
 
-    # STRICT ROUTING - Tylko jedna funkcja może działać naraz
-    if server.status == "lobby": render_lobby()
-    elif server.status == "playing": render_playing()
-    elif server.status == "round_over": render_round_over()
-    elif server.status == "finished": render_finished()
-    elif server.status == "disconnected": render_disconnected()
+    # --- GLÓWNY KONTENER (PLACEHOLDER) ---
+    # To jest klucz do naprawy. Tworzymy puste "pudełko" na całą stronę.
+    # Wszystko co rysujemy, trafia DO ŚRODKA.
+    # Jeśli w pliku są jakieś śmieci na dole, będą POZA tym pudełkiem, ale 
+    # logika gry ich nie dotknie.
+    
+    main_container = st.empty()
+    
+    with main_container.container():
+        if server.status == "lobby": render_lobby()
+        elif server.status == "playing": render_playing()
+        elif server.status == "round_over": render_round_over()
+        elif server.status == "finished": render_finished()
+        elif server.status == "disconnected": render_disconnected()
 
 if __name__ == "__main__":
     main()
-
-
-
-
-

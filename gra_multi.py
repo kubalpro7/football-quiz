@@ -2,12 +2,13 @@ import streamlit as st
 import os
 import random
 import time
+import pandas as pd  # <--- NOWOŚĆ: Biblioteka do obsługi CSV
 from PIL import Image
 
 # ==============================================================================
 # 1. KONFIGURACJA I CSS
 # ==============================================================================
-st.set_page_config(page_title="Football Quiz V12", layout="centered", page_icon="⚽")
+st.set_page_config(page_title="Football Quiz V12 - Cloud Edition", layout="centered", page_icon="⚽")
 
 st.markdown("""
     <style>
@@ -69,7 +70,7 @@ class GlobalGameState:
         self.status = "lobby" 
         
         self.current_team = None
-        self.current_image = None
+        self.current_image = None # Teraz to będzie URL (string)
         self.image_pool = []
         self.round_id = 0
         self.input_reset_counter = 0 
@@ -92,8 +93,10 @@ def get_server_state():
 server = get_server_state()
 
 # ==============================================================================
-# 3. FUNKCJE LOGIKI
+# 3. FUNKCJE LOGIKI (ZMODYFIKOWANE POD CSV)
 # ==============================================================================
+CSV_FILE = "baza_zdjec.csv" # Nazwa Twojego pliku
+
 def update_heartbeat(role):
     if role == "P1": server.p1_last_seen = time.time()
     elif role == "P2": server.p2_last_seen = time.time()
@@ -111,36 +114,46 @@ def check_disconnections():
         server.status = "disconnected"
         server.disconnect_reason = f"Gracz {server.p2_name} rozłączył się!"
 
-def get_available_leagues(folder):
-    if not os.path.exists(folder): return []
-    leagues = []
-    for item in os.listdir(folder):
-        if os.path.isdir(os.path.join(folder, item)) and not item.startswith("."):
-            leagues.append(item.replace("_", " "))
-    return sorted(leagues)
+# --- NOWA FUNKCJA DO POBIERANIA LIG Z PLIKU CSV ---
+def get_available_leagues(csv_path):
+    if not os.path.exists(csv_path):
+        return []
+    try:
+        # Czytamy CSV, szukamy kolumny 'Liga' i bierzemy unikalne wartości
+        df = pd.read_csv(csv_path)
+        if 'Liga' in df.columns:
+            return sorted(df['Liga'].dropna().unique().tolist())
+        return []
+    except Exception as e:
+        st.error(f"Błąd odczytu CSV: {e}")
+        return []
 
-def load_images_filtered(folder, selected_leagues):
+# --- NOWA FUNKCJA DO ŁADOWANIA ZDJĘĆ Z PLIKU CSV ---
+def load_images_filtered(csv_path, selected_leagues):
     server.image_pool = []
-    if not os.path.exists(folder): return
-    for root, dirs, files in os.walk(folder):
-        folder_parts = root.split(os.sep)
-        match = False
-        for part in folder_parts:
-            if part.replace("_", " ") in selected_leagues:
-                match = True; break
-        if match:
-            for file in files:
-                if file.lower().endswith(('.jpg', '.png', '.jpeg')):
-                    team = os.path.basename(root).replace("_", " ")
-                    if team == "." or team == folder: continue
-                    full_path = os.path.join(root, file)
-                    server.image_pool.append((team, full_path))
+    if not os.path.exists(csv_path):
+        return
+
+    try:
+        df = pd.read_csv(csv_path)
+        # Filtrujemy tylko wybrane ligi
+        filtered_df = df[df['Liga'].isin(selected_leagues)]
+        
+        # Iterujemy i dodajemy do puli (Klub, Link URL)
+        # Zakładamy kolumny: Liga, Klub, Link_Bezposredni
+        for _, row in filtered_df.iterrows():
+            team = row['Klub']
+            url = row['Link_Bezposredni']
+            server.image_pool.append((team, url))
+            
+    except Exception as e:
+        st.error(f"Błąd przetwarzania CSV: {e}")
 
 def start_new_round():
     if not server.image_pool: return
-    team, img = random.choice(server.image_pool)
+    team, img_url = random.choice(server.image_pool)
     server.current_team = team
-    server.current_image = img
+    server.current_image = img_url # Teraz to URL
     server.p1_locked = False
     server.p2_locked = False
     server.status = "playing"
@@ -155,19 +168,14 @@ def start_new_round():
 
 def handle_guess(guess_text):
     if not guess_text: return False
-    # Tylko dokładne dopasowanie (Selectbox)
     if guess_text == server.current_team: return True
     return False
 
 def handle_wrong(role):
-    # Czyścimy pole wyboru (licznik resetu rośnie -> klucz widgetu się zmienia)
     server.input_reset_counter += 1
-    
-    # W trybie solo NIC więcej nie robimy (nie blokujemy)
     if server.mode == "solo":
         return 
 
-    # W trybie Multi blokujemy
     if role == "P1":
         server.p1_locked = True
         server.p2_locked = False
@@ -211,8 +219,6 @@ def reset_game():
     server.p1_last_seen = time.time()
     server.p2_last_seen = time.time()
 
-FOLDER_Z_KOSZULKAMI = "."
-
 # ==============================================================================
 # 4. WIDOKI
 # ==============================================================================
@@ -220,6 +226,11 @@ FOLDER_Z_KOSZULKAMI = "."
 def view_lobby():
     st.markdown("<h2 style='text-align: center;'>🏆 LOBBY</h2>", unsafe_allow_html=True)
     
+    # Sprawdzenie czy plik CSV istnieje
+    if not os.path.exists(CSV_FILE):
+        st.error(f"⚠️ Nie znaleziono pliku {CSV_FILE}! Wgraj go do folderu aplikacji.")
+        return
+
     col1, col2 = st.columns(2)
     
     # P1
@@ -271,7 +282,12 @@ def view_lobby():
     # Start Gry
     if st.session_state.my_role == "P1":
         st.subheader("⚙️ Ustawienia")
-        all_leagues = get_available_leagues(FOLDER_Z_KOSZULKAMI)
+        # Pobieranie lig z CSV
+        all_leagues = get_available_leagues(CSV_FILE)
+        
+        if not all_leagues:
+            st.warning("Plik CSV jest pusty lub ma błędną strukturę (brak kolumny 'Liga').")
+        
         selected_leagues = st.multiselect("Wybierz ligi:", all_leagues, default=all_leagues)
         
         st.write("") 
@@ -285,9 +301,10 @@ def view_lobby():
                 st.error("⚠️ Wybierz min. 1 ligę!")
             else:
                 if st.button("START MECZU 🚀", type="primary", use_container_width=True):
-                    load_images_filtered(FOLDER_Z_KOSZULKAMI, selected_leagues)
+                    # Ładowanie z CSV
+                    load_images_filtered(CSV_FILE, selected_leagues)
                     if not server.image_pool:
-                        st.error("Brak zdjęć!")
+                        st.error("Brak zdjęć w wybranych ligach!")
                     else:
                         server.p1_last_seen = time.time()
                         server.p2_last_seen = time.time()
@@ -327,14 +344,17 @@ def view_playing():
         elif server.p2_locked:
             st.markdown(f"<div class='turn-alert'>❌ {server.p2_name} PUDŁO! Tura: {server.p1_name}</div>", unsafe_allow_html=True)
 
-    # Zdjęcie
+    # Zdjęcie (Teraz obsługuje URL)
     if server.current_image:
-        try: st.image(Image.open(server.current_image), use_container_width=True)
-        except: st.error("Błąd zdjęcia")
+        try: 
+            st.image(server.current_image, use_container_width=True)
+        except Exception as e: 
+            st.error(f"Nie udało się załadować zdjęcia: {e}")
 
+    # Pobieranie listy klubów z puli załadowanej z CSV
     all_teams = sorted(list(set([x[0] for x in server.image_pool])))
 
-    # FORMULARZ (Bez trybu klawiatury - tylko lista)
+    # FORMULARZ
     with st.form(key=f"gf_{server.round_id}_{server.input_reset_counter}"):
         
         user_guess = st.selectbox("Wybierz klub:", [""] + all_teams)
@@ -368,8 +388,6 @@ def view_playing():
                 handle_win(role)
                 st.rerun()
             else:
-                # BŁĄD
-                # W trybie Multi pokazujemy toast, w Solo NIE.
                 if server.mode == "multi":
                     st.toast("ŹLE!", icon="❌")
                 
@@ -414,7 +432,10 @@ def view_round_over():
     """, unsafe_allow_html=True)
 
     st.markdown(f"<h3 style='text-align:center; color:#4CAF50;'>{server.last_correct_answer}</h3>", unsafe_allow_html=True)
-    if server.current_image: st.image(Image.open(server.current_image), use_container_width=True)
+    
+    # Wyświetlanie zdjęcia z URL w podsumowaniu
+    if server.current_image: 
+        st.image(server.current_image, use_container_width=True)
 
     st.divider()
 
@@ -483,4 +504,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

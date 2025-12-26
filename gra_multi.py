@@ -346,6 +346,7 @@ def view_playing():
 
     # Zdjęcie (Teraz obsługuje URL)
     if server.current_image:
+        st.warning(f"DEBUG LINKU: {server.current_image}") # <--- DODAJ TO
         try: 
             st.image(server.current_image, use_container_width=True)
         except Exception as e: 
@@ -504,5 +505,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 

@@ -425,9 +425,20 @@ def view_playing():
             else: server.who_starts_next = "P1"
             server.status = "round_over"
             st.rerun()
+    if submit_surrender:
+        handle_surrender(role)
+        st.rerun()
 
-    time.sleep(1)
-    st.rerun()
+    # Obsługa blokady w Multi
+    if server.mode == "multi":
+        if server.p1_locked and server.p2_locked:
+            # ... (logika remisu) ...
+            st.rerun()
+
+    # --- ZMIANA TUTAJ: Migotanie tylko w Multi ---
+    if server.mode == "multi":
+        time.sleep(1)
+        st.rerun()
 def view_round_over():
     if st.session_state.my_role == "P1":
         if st.sidebar.button("🏁 ZAKOŃCZ GRĘ", type="primary"):
@@ -449,9 +460,16 @@ def view_round_over():
 
     st.markdown(f"<h3 style='text-align:center; color:#4CAF50;'>{server.last_correct_answer}</h3>", unsafe_allow_html=True)
     
-    # Wyświetlanie zdjęcia z URL w podsumowaniu
+    # --- TUTAJ ZMIANA: PANCERNE ŁADOWANIE ZDJĘCIA ---
     if server.current_image: 
-        st.image(server.current_image, use_container_width=True)
+        try:
+            response = requests.get(server.current_image)
+            response.raise_for_status()
+            image_data = Image.open(BytesIO(response.content))
+            st.image(image_data, use_container_width=True)
+        except Exception as e:
+            st.warning(f"Nie udało się załadować zdjęcia w podsumowaniu.")
+    # ------------------------------------------------
 
     st.divider()
 
@@ -520,6 +538,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

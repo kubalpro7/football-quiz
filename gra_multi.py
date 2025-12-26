@@ -64,7 +64,8 @@ server = get_server_state()
 # Konfiguracja Trybów
 GAME_MODES = {
     "👕 Koszulki (Ligi)": ("baza_zdjec.csv", "Jaki to klub?"),
-    "👤 Sylwetki Piłkarzy": ("sylwetki_pilkarzy.csv", "Kto to jest?")
+    "👤 Sylwetki Piłkarzy": ("sylwetki_pilkarzy.csv", "Kto to jest?"),
+    "🛡️ Herby Klubowe": ("herby_klubowe.csv", "Do kogo należy ten herb?")
 }
 
 def update_heartbeat(role):
@@ -285,6 +286,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

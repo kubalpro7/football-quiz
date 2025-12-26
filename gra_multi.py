@@ -1,31 +1,39 @@
-import requests
-from io import BytesIO
+Analizując przesłany plik sylwetki_pilkarzy.csv, widzę, że ma on identyczną strukturę jak baza koszulek (Liga, Klub, Link), ale zawiera te same nazwy lig (np. "Bundesliga (NIE)"), co plik z koszulkami.
+
+Gdybyśmy po prostu zmieszali te pliki, w grze zrobiłby się bałagan – wybierając "Bundesligę", losowałoby raz koszulkę, a raz sylwetkę.
+
+Najlepszym rozwiązaniem jest dodanie przełącznika trybu gry w Lobby. Dzięki temu gracz decyduje: "Teraz zgaduję 👕 Koszulki", a za chwilę "Teraz zgaduję 👤 Sylwetki".
+
+Co musisz zrobić:
+Wgraj plik sylwetki_pilkarzy.csv do tego samego folderu co main.py i baza_zdjec.csv.
+
+Podmień kod w pliku main.py na poniższą, zaktualizowaną wersję.
+
+Nowy kod gry (main.py)
+Dodałem sekcję "Wybierz kategorię" w Lobby, która dynamicznie przełącza pliki CSV.
+
+Python
+
 import streamlit as st
 import os
 import random
 import time
-import pandas as pd  # <--- NOWOŚĆ: Biblioteka do obsługi CSV
+import pandas as pd
+import requests
+from io import BytesIO
 from PIL import Image
 
 # ==============================================================================
 # 1. KONFIGURACJA I CSS
 # ==============================================================================
-st.set_page_config(page_title="Football Quiz V12 - Cloud Edition", layout="centered", page_icon="⚽")
+st.set_page_config(page_title="Football Quiz V13 - Multi Categories", layout="centered", page_icon="⚽")
 
 st.markdown("""
     <style>
-    /* Reset marginesów */
-    .block-container {
-        padding-top: 2rem !important;
-        padding-bottom: 5rem !important;
-        max-width: 800px;
-    }
+    .block-container { padding-top: 2rem !important; padding-bottom: 5rem !important; max-width: 800px; }
     .stApp { background-color: #0e1117; }
-    
-    /* Ukrycie menu */
     #MainMenu, footer, header {visibility: hidden;}
-
-    /* Tablica wyników */
+    
     .score-board {
         display: flex; justify-content: space-between; align-items: center;
         background: #262730; padding: 15px; border-radius: 10px;
@@ -33,38 +41,25 @@ st.markdown("""
         border: 1px solid #444; margin-bottom: 20px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
+    img { max-height: 400px !important; object-fit: contain; border-radius: 12px; margin-bottom: 10px; }
     
-    /* Zdjęcie */
-    img {
-        max-height: 400px !important;
-        object-fit: contain;
-        border-radius: 12px;
-        margin-bottom: 10px;
-    }
-    
-    /* Karty graczy */
-    .player-box {
-        text-align: center; padding: 10px; border-radius: 8px; width: 100%; font-weight: bold; font-size: 16px;
-    }
+    .player-box { text-align: center; padding: 10px; border-radius: 8px; width: 100%; font-weight: bold; font-size: 16px; }
     .p1-box { background-color: #1b5e20; color: #a5d6a7; border: 1px solid #2e7d32; }
     .p2-box { background-color: #0d47a1; color: #90caf9; border: 1px solid #1565c0; }
     .solo-box { background-color: #e65100; color: #ffcc80; border: 1px solid #ef6c00; } 
-
-    /* Alerty */
     .turn-alert { text-align: center; color: #ffca28; font-weight: bold; font-size: 18px; margin: 10px 0; }
     
-    /* Przyciski */
     div[data-testid="column"] { display: flex; align-items: center; justify-content: center; }
     button { height: 50px !important; font-size: 16px !important; }
     </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. STAN SERWERA (SINGLETON)
+# 2. STAN SERWERA
 # ==============================================================================
 class GlobalGameState:
     def __init__(self):
-        self.mode = "multi" # "multi" lub "solo"
+        self.mode = "multi"
         self.p1_name = None
         self.p2_name = None
         self.p1_score = 0
@@ -72,7 +67,7 @@ class GlobalGameState:
         self.status = "lobby" 
         
         self.current_team = None
-        self.current_image = None # Teraz to będzie URL (string)
+        self.current_image = None
         self.image_pool = []
         self.round_id = 0
         self.input_reset_counter = 0 
@@ -87,6 +82,9 @@ class GlobalGameState:
         self.p1_last_seen = time.time()
         self.p2_last_seen = time.time()
         self.disconnect_reason = ""
+        
+        # Nowe pole: informacja o wybranym trybie (do wyświetlania)
+        self.active_category_name = "Koszulki"
 
 @st.cache_resource
 def get_server_state():
@@ -95,9 +93,14 @@ def get_server_state():
 server = get_server_state()
 
 # ==============================================================================
-# 3. FUNKCJE LOGIKI (ZMODYFIKOWANE POD CSV)
+# 3. LOGIKA I PLIKI
 # ==============================================================================
-CSV_FILE = "baza_zdjec.csv" # Nazwa Twojego pliku
+
+# Definicja dostępnych trybów i plików
+GAME_MODES = {
+    "👕 Koszulki": "baza_zdjec.csv",
+    "👤 Sylwetki Piłkarzy": "sylwetki_pilkarzy.csv"
+}
 
 def update_heartbeat(role):
     if role == "P1": server.p1_last_seen = time.time()
@@ -116,12 +119,10 @@ def check_disconnections():
         server.status = "disconnected"
         server.disconnect_reason = f"Gracz {server.p2_name} rozłączył się!"
 
-# --- NOWA FUNKCJA DO POBIERANIA LIG Z PLIKU CSV ---
 def get_available_leagues(csv_path):
     if not os.path.exists(csv_path):
         return []
     try:
-        # Czytamy CSV, szukamy kolumny 'Liga' i bierzemy unikalne wartości
         df = pd.read_csv(csv_path)
         if 'Liga' in df.columns:
             return sorted(df['Liga'].dropna().unique().tolist())
@@ -130,7 +131,6 @@ def get_available_leagues(csv_path):
         st.error(f"Błąd odczytu CSV: {e}")
         return []
 
-# --- NOWA FUNKCJA DO ŁADOWANIA ZDJĘĆ Z PLIKU CSV ---
 def load_images_filtered(csv_path, selected_leagues):
     server.image_pool = []
     if not os.path.exists(csv_path):
@@ -138,11 +138,8 @@ def load_images_filtered(csv_path, selected_leagues):
 
     try:
         df = pd.read_csv(csv_path)
-        # Filtrujemy tylko wybrane ligi
         filtered_df = df[df['Liga'].isin(selected_leagues)]
         
-        # Iterujemy i dodajemy do puli (Klub, Link URL)
-        # Zakładamy kolumny: Liga, Klub, Link_Bezposredni
         for _, row in filtered_df.iterrows():
             team = row['Klub']
             url = row['Link_Bezposredni']
@@ -155,7 +152,7 @@ def start_new_round():
     if not server.image_pool: return
     team, img_url = random.choice(server.image_pool)
     server.current_team = team
-    server.current_image = img_url # Teraz to URL
+    server.current_image = img_url
     server.p1_locked = False
     server.p2_locked = False
     server.status = "playing"
@@ -175,8 +172,7 @@ def handle_guess(guess_text):
 
 def handle_wrong(role):
     server.input_reset_counter += 1
-    if server.mode == "solo":
-        return 
+    if server.mode == "solo": return 
 
     if role == "P1":
         server.p1_locked = True
@@ -187,7 +183,6 @@ def handle_wrong(role):
 
 def handle_surrender(role):
     server.input_reset_counter += 1
-    
     if server.mode == "solo":
         server.winner_last_round = "NIKT"
         server.last_correct_answer = server.current_team
@@ -228,11 +223,6 @@ def reset_game():
 def view_lobby():
     st.markdown("<h2 style='text-align: center;'>🏆 LOBBY</h2>", unsafe_allow_html=True)
     
-    # Sprawdzenie czy plik CSV istnieje
-    if not os.path.exists(CSV_FILE):
-        st.error(f"⚠️ Nie znaleziono pliku {CSV_FILE}! Wgraj go do folderu aplikacji.")
-        return
-
     col1, col2 = st.columns(2)
     
     # P1
@@ -281,17 +271,26 @@ def view_lobby():
 
     st.divider()
 
-    # Start Gry
+    # START GRY - KONFIGURACJA (Tylko dla Hosta)
     if st.session_state.my_role == "P1":
-        st.subheader("⚙️ Ustawienia")
-        # Pobieranie lig z CSV
-        all_leagues = get_available_leagues(CSV_FILE)
+        st.subheader("⚙️ Ustawienia Meczu")
+        
+        # 1. Wybór kategorii (Koszulki vs Sylwetki)
+        selected_mode_key = st.selectbox("Wybierz kategorię:", list(GAME_MODES.keys()))
+        current_csv_file = GAME_MODES[selected_mode_key]
+        
+        # Sprawdzenie czy plik istnieje
+        if not os.path.exists(current_csv_file):
+            st.error(f"⚠️ Brak pliku: {current_csv_file}. Wgraj go do folderu!")
+            return
+
+        # 2. Pobieranie lig z wybranego pliku
+        all_leagues = get_available_leagues(current_csv_file)
         
         if not all_leagues:
-            st.warning("Plik CSV jest pusty lub ma błędną strukturę (brak kolumny 'Liga').")
+            st.warning("Plik CSV jest pusty lub ma błędną strukturę.")
         
         selected_leagues = st.multiselect("Wybierz ligi:", all_leagues, default=all_leagues)
-        
         st.write("") 
         
         ready = False
@@ -303,8 +302,10 @@ def view_lobby():
                 st.error("⚠️ Wybierz min. 1 ligę!")
             else:
                 if st.button("START MECZU 🚀", type="primary", use_container_width=True):
-                    # Ładowanie z CSV
-                    load_images_filtered(CSV_FILE, selected_leagues)
+                    # Ładowanie z wybranego CSV
+                    load_images_filtered(current_csv_file, selected_leagues)
+                    server.active_category_name = selected_mode_key # Zapisujemy co gramy
+                    
                     if not server.image_pool:
                         st.error("Brak zdjęć w wybranych ligach!")
                     else:
@@ -324,6 +325,8 @@ def view_lobby():
 
 def view_playing():
     # Wynik
+    st.caption(f"Gramy w: {server.active_category_name}") # Info w co gramy
+    
     if server.mode == "solo":
         st.markdown(f"""
         <div class="score-board" style="justify-content: center;">
@@ -339,33 +342,22 @@ def view_playing():
         </div>
         """, unsafe_allow_html=True)
 
-    # Info tury (Tylko Multi)
     if server.mode == "multi":
         if server.p1_locked:
             st.markdown(f"<div class='turn-alert'>❌ {server.p1_name} PUDŁO! Tura: {server.p2_name}</div>", unsafe_allow_html=True)
         elif server.p2_locked:
             st.markdown(f"<div class='turn-alert'>❌ {server.p2_name} PUDŁO! Tura: {server.p1_name}</div>", unsafe_allow_html=True)
 
-    # --- POPRAWIONA SEKCJA ZDJĘCIA (Wersja Pancerna) ---
+    # ZDJĘCIE (Requests)
     if server.current_image:
         try:
-            # 1. Pobieramy plik "ręcznie" przez Python requests
             response = requests.get(server.current_image)
-            response.raise_for_status() # Sprawdź czy nie ma błędu 404/403
-            
-            # 2. Zamieniamy pobrane bajty na obrazek
+            response.raise_for_status()
             image_data = Image.open(BytesIO(response.content))
-            
-            # 3. Wyświetlamy gotowy obrazek
             st.image(image_data, use_container_width=True)
-            
         except Exception as e:
             st.error(f"Błąd pobierania: {e}")
-            st.caption(f"Link: {server.current_image}")
-    # ---------------------------------------------------
 
-    # Pobieranie listy klubów z puli załadowanej z CSV
-    # Zabezpieczenie na wypadek pustej listy
     if server.image_pool:
         all_teams = sorted(list(set([x[0] for x in server.image_pool])))
     else:
@@ -373,8 +365,8 @@ def view_playing():
 
     # FORMULARZ
     with st.form(key=f"gf_{server.round_id}_{server.input_reset_counter}"):
-        
-        user_guess = st.selectbox("Wybierz klub:", [""] + all_teams)
+        # Zmieniona etykieta na bardziej uniwersalną
+        user_guess = st.selectbox("Twoja odpowiedź:", [""] + all_teams)
 
         st.write("")
         c1, c2, c3 = st.columns([3, 1, 1])
@@ -388,7 +380,6 @@ def view_playing():
             else:
                 submit_end = False
 
-    # Logika formularza
     role = st.session_state.my_role
     
     if submit_end and role == "P1":
@@ -407,7 +398,6 @@ def view_playing():
             else:
                 if server.mode == "multi":
                     st.toast("ŹLE!", icon="❌")
-                
                 handle_wrong(role)
                 st.rerun()
         else:
@@ -425,20 +415,11 @@ def view_playing():
             else: server.who_starts_next = "P1"
             server.status = "round_over"
             st.rerun()
-    if submit_surrender:
-        handle_surrender(role)
-        st.rerun()
 
-    # Obsługa blokady w Multi
-    if server.mode == "multi":
-        if server.p1_locked and server.p2_locked:
-            # ... (logika remisu) ...
-            st.rerun()
-
-    # --- ZMIANA TUTAJ: Migotanie tylko w Multi ---
-    if server.mode == "multi":
+        # Odświeżanie tylko w multi
         time.sleep(1)
         st.rerun()
+
 def view_round_over():
     if st.session_state.my_role == "P1":
         if st.sidebar.button("🏁 ZAKOŃCZ GRĘ", type="primary"):
@@ -460,7 +441,6 @@ def view_round_over():
 
     st.markdown(f"<h3 style='text-align:center; color:#4CAF50;'>{server.last_correct_answer}</h3>", unsafe_allow_html=True)
     
-    # --- TUTAJ ZMIANA: PANCERNE ŁADOWANIE ZDJĘCIA ---
     if server.current_image: 
         try:
             response = requests.get(server.current_image)
@@ -468,12 +448,10 @@ def view_round_over():
             image_data = Image.open(BytesIO(response.content))
             st.image(image_data, use_container_width=True)
         except Exception as e:
-            st.warning(f"Nie udało się załadować zdjęcia w podsumowaniu.")
-    # ------------------------------------------------
+            st.warning("Błąd ładowania zdjęcia w podsumowaniu.")
 
     st.divider()
 
-    # Przycisk Dalej
     if server.mode == "solo":
         if st.button("NASTĘPNA RUNDA ➡️", type="primary", use_container_width=True):
             start_new_round()
@@ -515,9 +493,6 @@ def view_finished():
         reset_game()
         st.rerun()
 
-# ==============================================================================
-# 5. MAIN
-# ==============================================================================
 def main():
     if 'my_role' not in st.session_state: st.session_state.my_role = None
 
@@ -525,7 +500,6 @@ def main():
         update_heartbeat(st.session_state.my_role)
     check_disconnections()
 
-    # Reset awaryjny
     if st.sidebar.button("HARD RESET"):
         reset_game()
         st.rerun()
@@ -538,6 +512,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

@@ -346,8 +346,8 @@ def view_playing():
         elif server.p2_locked:
             st.markdown(f"<div class='turn-alert'>❌ {server.p2_name} PUDŁO! Tura: {server.p1_name}</div>", unsafe_allow_html=True)
 
-    # Zdjęcie (Teraz obsługuje URL)
-   if server.current_image:
+    # --- POPRAWIONA SEKCJA ZDJĘCIA (Wersja Pancerna) ---
+    if server.current_image:
         try:
             # 1. Pobieramy plik "ręcznie" przez Python requests
             response = requests.get(server.current_image)
@@ -360,12 +360,16 @@ def view_playing():
             st.image(image_data, use_container_width=True)
             
         except Exception as e:
-            # Jeśli nadal błąd, pokaż szczegóły
             st.error(f"Błąd pobierania: {e}")
-            st.caption(f"Problem z linkiem: {server.current_image}")
+            st.caption(f"Link: {server.current_image}")
+    # ---------------------------------------------------
 
     # Pobieranie listy klubów z puli załadowanej z CSV
-    all_teams = sorted(list(set([x[0] for x in server.image_pool])))
+    # Zabezpieczenie na wypadek pustej listy
+    if server.image_pool:
+        all_teams = sorted(list(set([x[0] for x in server.image_pool])))
+    else:
+        all_teams = []
 
     # FORMULARZ
     with st.form(key=f"gf_{server.round_id}_{server.input_reset_counter}"):
@@ -424,7 +428,6 @@ def view_playing():
 
     time.sleep(1)
     st.rerun()
-
 def view_round_over():
     if st.session_state.my_role == "P1":
         if st.sidebar.button("🏁 ZAKOŃCZ GRĘ", type="primary"):
@@ -517,6 +520,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

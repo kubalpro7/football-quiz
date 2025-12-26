@@ -1,3 +1,5 @@
+import requests
+from io import BytesIO
 import streamlit as st
 import os
 import random
@@ -345,12 +347,22 @@ def view_playing():
             st.markdown(f"<div class='turn-alert'>❌ {server.p2_name} PUDŁO! Tura: {server.p1_name}</div>", unsafe_allow_html=True)
 
     # Zdjęcie (Teraz obsługuje URL)
-    if server.current_image:
-        st.warning(f"DEBUG LINKU: {server.current_image}") # <--- DODAJ TO
-        try: 
-            st.image(server.current_image, use_container_width=True)
-        except Exception as e: 
-            st.error(f"Nie udało się załadować zdjęcia: {e}")
+   if server.current_image:
+        try:
+            # 1. Pobieramy plik "ręcznie" przez Python requests
+            response = requests.get(server.current_image)
+            response.raise_for_status() # Sprawdź czy nie ma błędu 404/403
+            
+            # 2. Zamieniamy pobrane bajty na obrazek
+            image_data = Image.open(BytesIO(response.content))
+            
+            # 3. Wyświetlamy gotowy obrazek
+            st.image(image_data, use_container_width=True)
+            
+        except Exception as e:
+            # Jeśli nadal błąd, pokaż szczegóły
+            st.error(f"Błąd pobierania: {e}")
+            st.caption(f"Problem z linkiem: {server.current_image}")
 
     # Pobieranie listy klubów z puli załadowanej z CSV
     all_teams = sorted(list(set([x[0] for x in server.image_pool])))
@@ -505,6 +517,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

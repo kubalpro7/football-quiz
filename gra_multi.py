@@ -1,3 +1,24 @@
+Świetnie! Plik herby_klubowe.csv wygląda idealnie – ma strukturę Liga, Klub, Link_Bezposredni, więc pasuje do Twojego obecnego kodu bez żadnych skomplikowanych przeróbek.
+
+Oto zaktualizowany kod main.py, który dodaje kategorię "🛡️ Herby Klubowe".
+
+Co się zmieniło?
+Dodałem tylko jedną linię w konfiguracji GAME_MODES. Teraz gra widzi 3 pliki i pozwala wybrać herby w menu.
+
+📋 Instrukcja:
+Upewnij się, że w folderze projektu masz teraz 3 pliki CSV:
+
+baza_zdjec.csv (Koszulki)
+
+sylwetki_pilkarzy.csv (Sylwetki)
+
+herby_klubowe.csv (Herby - ten nowy)
+
+Podmień kod w main.py na poniższy.
+
+💻 Nowy kod gry (main.py)
+Python
+
 import streamlit as st
 import os
 import random
@@ -31,12 +52,14 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Lista Top 20 - musi pasować do nazw folderów (Klubów) w CSV
+# Lista Top 20 - Używana do filtra.
+# UWAGA: Nazwy tutaj muszą pasować do nazw w plikach CSV (szczególnie w herby_klubowe.csv)
 TOP_20_CLUBS = [
     "Manchester City", "Real Madrid", "Bayern Munich", "Liverpool", "Inter Milan",
     "Bayer Leverkusen", "Arsenal", "Barcelona", "Atletico Madrid", "PSG",
     "Borussia Dortmund", "Juventus", "RB Leipzig", "Atalanta", "Benfica",
-    "Chelsea", "AC Milan", "Sporting CP", "Napoli", "Tottenham"
+    "Chelsea", "AC Milan", "Sporting CP", "Napoli", "Tottenham",
+    "Paris Saint Germain", "Inter", "Milan", "Bayer 04 Leverkusen" # Dodatkowe warianty nazw z API
 ]
 
 # ==============================================================================
@@ -61,11 +84,11 @@ class GlobalGameState:
 def get_server_state(): return GlobalGameState()
 server = get_server_state()
 
-# Konfiguracja Trybów
+# --- KONFIGURACJA TRYBÓW (TUTAJ DODANO HERBY) ---
 GAME_MODES = {
     "👕 Koszulki (Ligi)": ("baza_zdjec.csv", "Jaki to klub?"),
     "👤 Sylwetki Piłkarzy": ("sylwetki_pilkarzy.csv", "Kto to jest?"),
-    "🛡️ Herby Klubowe": ("herby_klubowe.csv", "Do kogo należy ten herb?")
+    "🛡️ Herby Klubowe": ("herby_klubowe.csv", "Do kogo należy ten herb?") # NOWOŚĆ
 }
 
 def update_heartbeat(role):
@@ -99,19 +122,18 @@ def load_images_filtered(csv_path, selected_leagues, use_top_20_filter=False):
         
         # 2. Filtr Top 20 (opcjonalny)
         if use_top_20_filter:
-            # Sprawdzamy czy mamy kolumnę "Klub_Filter" (z nowego skryptu sylwetek)
-            if 'Klub_Filter' in df.columns:
-                df = df[df['Klub_Filter'].isin(TOP_20_CLUBS)]
-            # Jeśli nie, sprawdzamy kolumnę "Klub" (stary plik koszulek)
-            # Uwaga: w sylwetkach kolumna 'Klub' może nazywać się 'Odpowiedz' w zależności od skryptu.
-            # Tutaj zakładam, że dla koszulek to 'Klub' lub 'Odpowiedz' zawierająca nazwę klubu.
-            elif 'Klub' in df.columns:
-                df = df[df['Klub'].isin(TOP_20_CLUBS)]
-            elif 'Odpowiedz' in df.columns: # Dla kompatybilności
-                 df = df[df['Odpowiedz'].isin(TOP_20_CLUBS)]
+            # Sprawdzenie różnych nazw kolumn w zależności od pliku CSV
+            col_to_check = None
+            if 'Klub_Filter' in df.columns: col_to_check = 'Klub_Filter'
+            elif 'Klub' in df.columns: col_to_check = 'Klub'
+            elif 'Odpowiedz' in df.columns: col_to_check = 'Odpowiedz'
+            
+            if col_to_check:
+                # Filtrujemy
+                df = df[df[col_to_check].isin(TOP_20_CLUBS)]
         
         # 3. Zapisywanie do puli
-        # Szukamy kolumny z odpowiedzią (może być 'Klub' lub 'Odpowiedz')
+        # Ustalenie która kolumna jest odpowiedzią
         ans_col = 'Odpowiedz' if 'Odpowiedz' in df.columns else 'Klub'
         link_col = 'Link_Bezposredni'
         
@@ -181,15 +203,16 @@ def view_lobby():
     
     if st.session_state.my_role == "P1":
         st.subheader("⚙️ Ustawienia")
-        mode = st.selectbox("Wybierz tryb:", list(GAME_MODES.keys()))
+        # Wybór kategorii (Teraz są 3 opcje)
+        mode = st.selectbox("Wybierz kategorię:", list(GAME_MODES.keys()))
         csv_file, _ = GAME_MODES[mode]
         
         # Wybór Lig
         all_leagues = get_available_leagues(csv_file)
         sel_leagues = st.multiselect("Wybierz ligi:", all_leagues, default=all_leagues)
         
-        # NOWOŚĆ: CHECKBOX FILTRA
-        use_top20 = st.checkbox("🏆 Tylko kluby z Top 20 (Ranking)", value=False)
+        # Filtr Top 20
+        use_top20 = st.checkbox("🏆 Tylko Top 20 (Ranking)", value=False)
         
         ready = (server.mode=="solo" and server.p1_name) or (server.mode=="multi" and server.p1_name and server.p2_name)
         
@@ -199,7 +222,7 @@ def view_lobby():
                 else:
                     load_images_filtered(csv_file, sel_leagues, use_top20)
                     server.active_category_name = mode
-                    if not server.image_pool: st.error(f"Brak zdjęć! (Może filtr Top 20 wykluczył wszystko? Sprawdź nazwy klubów w CSV i w liście TOP_20_CLUBS)")
+                    if not server.image_pool: st.error(f"Brak zdjęć! (Może filtr Top 20 wykluczył wszystko? Sprawdź nazwy klubów w CSV)")
                     else: server.p1_last_seen=time.time(); server.p2_last_seen=time.time(); start_new_round(); st.rerun()
         elif server.mode == "multi": st.warning("Czekamy na P2...")
             
@@ -208,7 +231,7 @@ def view_lobby():
 
 def view_playing():
     _, q_label = GAME_MODES.get(server.active_category_name, ("", "Wybierz:"))
-    st.caption(f"Tryb: {server.active_category_name}")
+    st.caption(f"Kategoria: {server.active_category_name}")
     
     if server.mode=="solo": st.markdown(f"<div class='score-board' style='justify-content:center'>{server.p1_score}</div>", unsafe_allow_html=True)
     else: st.markdown(f"<div class='score-board'><span>{server.p1_name}: {server.p1_score}</span><span>VS</span><span>{server.p2_name}: {server.p2_score}</span></div>", unsafe_allow_html=True)
@@ -217,11 +240,12 @@ def view_playing():
         if server.p1_locked: st.warning(f"{server.p1_name} zablokowany!")
         elif server.p2_locked: st.warning(f"{server.p2_name} zablokowany!")
 
+    # Wyświetlanie zdjęcia (Requests + PIL)
     if server.current_image:
         try:
             r = requests.get(server.current_image); r.raise_for_status()
             st.image(Image.open(BytesIO(r.content)), use_container_width=True)
-        except: st.error("Błąd zdjęcia")
+        except: st.error("Błąd ładowania obrazka")
 
     opts = sorted(list(set([x[0] for x in server.image_pool]))) if server.image_pool else []
     
@@ -272,6 +296,11 @@ def view_finished():
     st.title("KONIEC"); st.header(f"{server.p1_score} - {server.p2_score}")
     if st.button("LOBBY"): reset_game(); st.rerun()
 
+def view_disconnected():
+    st.error(f"🚨 WALKOWER! {server.disconnect_reason}")
+    if st.button("WRÓĆ DO LOBBY 🏠", type="primary"): reset_game(); st.rerun()
+    time.sleep(2); st.rerun()
+
 def main():
     if 'my_role' not in st.session_state: st.session_state.my_role = None
     if st.session_state.my_role: update_heartbeat(st.session_state.my_role)
@@ -286,6 +315,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

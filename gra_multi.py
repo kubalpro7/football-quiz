@@ -1,19 +1,3 @@
-Analizując przesłany plik sylwetki_pilkarzy.csv, widzę, że ma on identyczną strukturę jak baza koszulek (Liga, Klub, Link), ale zawiera te same nazwy lig (np. "Bundesliga (NIE)"), co plik z koszulkami.
-
-Gdybyśmy po prostu zmieszali te pliki, w grze zrobiłby się bałagan – wybierając "Bundesligę", losowałoby raz koszulkę, a raz sylwetkę.
-
-Najlepszym rozwiązaniem jest dodanie przełącznika trybu gry w Lobby. Dzięki temu gracz decyduje: "Teraz zgaduję 👕 Koszulki", a za chwilę "Teraz zgaduję 👤 Sylwetki".
-
-Co musisz zrobić:
-Wgraj plik sylwetki_pilkarzy.csv do tego samego folderu co main.py i baza_zdjec.csv.
-
-Podmień kod w pliku main.py na poniższą, zaktualizowaną wersję.
-
-Nowy kod gry (main.py)
-Dodałem sekcję "Wybierz kategorię" w Lobby, która dynamicznie przełącza pliki CSV.
-
-Python
-
 import streamlit as st
 import os
 import random
@@ -512,6 +496,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

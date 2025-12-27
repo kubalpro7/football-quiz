@@ -11,7 +11,7 @@ import datetime
 # ==============================================================================
 # 1. KONFIGURACJA I STYL
 # ==============================================================================
-st.set_page_config(page_title="Football Quiz Multi-Room", layout="centered", page_icon="⚽")
+st.set_page_config(page_title="Football Quiz Live", layout="centered", page_icon="⚽")
 
 st.markdown("""
     <style>
@@ -30,7 +30,6 @@ st.markdown("""
     div[data-testid="column"] { display: flex; align-items: center; justify-content: center; }
     button { height: 50px !important; font-size: 16px !important; }
     
-    /* Styl dla wyboru pokoju */
     .room-box { border: 2px dashed #444; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px; }
     </style>
 """, unsafe_allow_html=True)
@@ -52,14 +51,13 @@ GAME_MODES = {
 }
 
 # ==============================================================================
-# 2. STRUKTURA POKOI (NOWOŚĆ!)
+# 2. ZARZĄDZANIE POKOJAMI
 # ==============================================================================
 
 class GameState:
     """Stan pojedynczego stolika gry"""
     def __init__(self, room_id):
         self.room_id = room_id
-        self.created_at = time.time()
         self.last_activity = time.time()
         
         self.mode = "multi"
@@ -78,36 +76,28 @@ class GameState:
 class RoomManager:
     """Zarządza wieloma stolikami"""
     def __init__(self):
-        self.rooms = {} # Słownik: {"nazwa_pokoju": GameState}
+        self.rooms = {} 
 
     def get_room(self, room_id):
-        # Usuwanie starych, pustych pokoi (np. starszych niż 1h bez aktywności)
         self.cleanup_rooms()
-        
         if room_id not in self.rooms:
             self.rooms[room_id] = GameState(room_id)
-        
-        # Aktualizacja czasu życia pokoju
         self.rooms[room_id].last_activity = time.time()
         return self.rooms[room_id]
 
     def cleanup_rooms(self):
         now = time.time()
-        # Usuń pokoje nieaktywne od 30 minut
+        # Usuń pokoje nieaktywne od 30 min
         timeout = 1800 
         to_delete = [rid for rid, r in self.rooms.items() if now - r.last_activity > timeout]
-        for rid in to_delete:
-            del self.rooms[rid]
+        for rid in to_delete: del self.rooms[rid]
 
 @st.cache_resource
-def get_manager():
-    return RoomManager()
-
-# Pobieramy globalnego menadżera (Singleton)
+def get_manager(): return RoomManager()
 manager = get_manager()
 
 # ==============================================================================
-# 3. POMOCNICZE FUNKCJE LOGIKI
+# 3. LOGIKA GRY
 # ==============================================================================
 
 def get_available_leagues(csv_path):
@@ -164,56 +154,43 @@ def check_disconnections(server):
 def update_heartbeat(server, role):
     if role == "P1": server.p1_last_seen = time.time()
     elif role == "P2": server.p2_last_seen = time.time()
-    server.last_activity = time.time() # Ważne dla RoomManagera
+    server.last_activity = time.time() 
 
 def reset_game(server):
     server.mode="multi"; server.p1_name=None; server.p2_name=None; server.p1_score=0; server.p2_score=0
     server.status="lobby"; server.p1_locked=False; server.p2_locked=False; server.who_starts_next="P1"
 
 # ==============================================================================
-# 4. EKRAN STARTOWY (WYBÓR POKOJU)
+# 4. WIDOKI
 # ==============================================================================
 
 def view_main_menu():
     st.markdown("<h1 style='text-align: center;'>⚽ FOOTBALL QUIZ</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #888;'>Wybierz stolik, aby rozpocząć grę</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #888;'>Wpisz nazwę pokoju, aby dołączyć</p>", unsafe_allow_html=True)
     
     st.markdown("<div class='room-box'>", unsafe_allow_html=True)
     
     c1, c2 = st.columns([3, 1])
     with c1:
-        room_input = st.text_input("Nazwa pokoju (np. Stolik1, LigaMistrzow):", placeholder="Wpisz nazwę pokoju...")
+        # Dodajemy unikalny klucz, żeby nie gubił focusa
+        room_input = st.text_input("Nazwa pokoju:", placeholder="np. Stolik1", key="room_input_field")
     with c2:
-        st.write("") # Spacer
-        st.write("")
+        st.write(""); st.write("")
         if st.button("DOŁĄCZ 🚪", type="primary", use_container_width=True):
             if room_input:
                 st.session_state.current_room_id = room_input
                 st.rerun()
-            else:
-                st.error("Podaj nazwę pokoju!")
-    
+            else: st.error("Podaj nazwę!")
     st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Lista aktywnych pokoi (Opcjonalnie)
-    active_rooms = list(manager.rooms.keys())
-    if active_rooms:
-        st.caption(f"Aktywne pokoje: {', '.join(active_rooms)}")
-
-# ==============================================================================
-# 5. WIDOKI GRY (WEWNĄTRZ POKOJU)
-# ==============================================================================
 
 def view_game_lobby(server):
-    st.markdown(f"<h2 style='text-align: center;'>🚪 Pokój: {server.room_id}</h2>", unsafe_allow_html=True)
+    st.markdown(f"<h3 style='text-align: center;'>🚪 Pokój: {server.room_id}</h3>", unsafe_allow_html=True)
     
-    # Przycisk wyjścia
     if st.sidebar.button("🔙 Zmień Pokój"):
-        del st.session_state.current_room_id
-        st.session_state.my_role = None
-        st.rerun()
+        del st.session_state.current_room_id; st.session_state.my_role = None; st.rerun()
 
     c1, c2 = st.columns(2)
+    # --- GRACZ 1 ---
     with c1:
         st.markdown("<div class='player-box p1-box'>GOSPODARZ (P1)</div>", unsafe_allow_html=True)
         if server.p1_name: st.success(f"✅ {server.p1_name}")
@@ -224,6 +201,8 @@ def view_game_lobby(server):
                 if n: server.p1_name=n; server.mode="multi"; st.session_state.my_role="P1"; st.rerun()
             if cc2.button("Solo"): 
                 if n: server.p1_name=n; server.mode="solo"; server.p2_name="CPU"; st.session_state.my_role="P1"; st.rerun()
+    
+    # --- GRACZ 2 ---
     with c2:
         if server.mode=="solo": st.info("Tryb Solo")
         else:
@@ -236,6 +215,7 @@ def view_game_lobby(server):
 
     st.divider()
     
+    # --- KONFIGURACJA (WIDOCZNA DLA WSZYSTKICH, ALE EDYTOWALNA DLA P1) ---
     if st.session_state.my_role == "P1":
         st.subheader("⚙️ Ustawienia")
         mode = st.selectbox("Wybierz kategorię:", list(GAME_MODES.keys()))
@@ -255,14 +235,20 @@ def view_game_lobby(server):
                     server.active_category_name = mode
                     if not server.image_pool: st.error(f"Brak zdjęć! Sprawdź filtry.")
                     else: server.p1_last_seen=time.time(); server.p2_last_seen=time.time(); start_new_round(server); st.rerun()
-        elif server.mode == "multi": st.warning("Czekamy na P2...")
+        elif server.mode == "multi": 
+            st.warning("Czekamy na drugiego gracza...")
             
-    elif st.session_state.my_role == "P2": st.info("Czekanie na hosta..."); time.sleep(1); st.rerun()
-    else: time.sleep(1); st.rerun()
+    elif st.session_state.my_role == "P2": 
+        st.info("Czekanie na hosta... (P1 konfiguruje grę)")
+    
+    # --- KLUCZOWA POPRAWKA: ODŚWIEŻANIE LOBBY DLA WSZYSTKICH ---
+    # Dzięki temu P1 zobaczy P2 od razu, a P2 zobaczy start gry
+    time.sleep(1.5)
+    st.rerun()
 
 def view_playing(server):
     _, q_label = GAME_MODES.get(server.active_category_name, ("", "Wybierz:"))
-    st.caption(f"Pokój: {server.room_id} | Kategoria: {server.active_category_name}")
+    st.caption(f"Pokój: {server.room_id} | {server.active_category_name}")
     
     if server.mode=="solo": st.markdown(f"<div class='score-board' style='justify-content:center'>{server.p1_score}</div>", unsafe_allow_html=True)
     else: st.markdown(f"<div class='score-board'><span>{server.p1_name}: {server.p1_score}</span><span>VS</span><span>{server.p2_name}: {server.p2_score}</span></div>", unsafe_allow_html=True)
@@ -305,6 +291,7 @@ def view_playing(server):
         else: server.p2_locked=True
         st.rerun()
     
+    # Odświeżanie w trakcie gry
     if server.mode=="multi":
         if server.p1_locked and server.p2_locked:
             server.winner_last_round="NIKT"; server.last_correct_answer=server.current_team
@@ -335,9 +322,7 @@ def view_round_over(server):
 def view_finished(server):
     st.title("KONIEC"); st.header(f"{server.p1_score} - {server.p2_score}")
     if st.button("LOBBY POKOJU 🔄"): reset_game(server); st.rerun()
-    if st.button("ZMIEŃ POKÓJ 🚪"): 
-        del st.session_state.current_room_id
-        st.rerun()
+    if st.button("ZMIEŃ POKÓJ 🚪"): del st.session_state.current_room_id; st.rerun()
 
 def view_disconnected(server):
     st.error(f"🚨 WALKOWER! {server.disconnect_reason}")
@@ -345,28 +330,21 @@ def view_disconnected(server):
     time.sleep(2); st.rerun()
 
 # ==============================================================================
-# 6. GŁÓWNA PĘTLA APLIKACJI
+# 5. MAIN
 # ==============================================================================
 
 def main():
-    # 1. Sprawdzamy, czy użytkownik jest w pokoju
     if 'current_room_id' not in st.session_state:
-        # Jeśli nie, pokazujemy wybór pokoi
         view_main_menu()
     else:
-        # 2. Jeśli jest w pokoju, pobieramy stan TEGO KONKRETNEGO pokoju
         room_id = st.session_state.current_room_id
         server = manager.get_room(room_id)
         
-        # Inicjalizacja roli w sesji (dla danej karty przeglądarki)
         if 'my_role' not in st.session_state: st.session_state.my_role = None
-        
-        if st.session_state.my_role:
-            update_heartbeat(server, st.session_state.my_role)
+        if st.session_state.my_role: update_heartbeat(server, st.session_state.my_role)
         
         check_disconnections(server)
 
-        # Wyświetlanie odpowiedniego widoku
         if server.status == "lobby": view_game_lobby(server)
         elif server.status == "playing": view_playing(server)
         elif server.status == "round_over": view_round_over(server)
@@ -375,6 +353,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

@@ -6,7 +6,6 @@ import pandas as pd
 import requests
 from io import BytesIO
 from PIL import Image
-import datetime
 
 # ==============================================================================
 # 1. KONFIGURACJA I STYL
@@ -29,7 +28,6 @@ st.markdown("""
     .turn-alert { text-align: center; color: #ffca28; font-weight: bold; font-size: 18px; margin: 10px 0; }
     div[data-testid="column"] { display: flex; align-items: center; justify-content: center; }
     button { height: 50px !important; font-size: 16px !important; }
-    
     .room-box { border: 2px dashed #444; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px; }
     </style>
 """, unsafe_allow_html=True)
@@ -43,7 +41,6 @@ TOP_20_CLUBS = [
     "Paris Saint Germain", "Inter", "Milan", "Bayer 04 Leverkusen"
 ]
 
-# Konfiguracja Trybów
 GAME_MODES = {
     "👕 Koszulki (Ligi)": ("baza_zdjec.csv", "Jaki to klub?"),
     "👤 Sylwetki Piłkarzy": ("sylwetki_pilkarzy.csv", "Kto to jest?"),
@@ -58,7 +55,11 @@ class GameState:
     """Stan pojedynczego stolika gry"""
     def __init__(self, room_id):
         self.room_id = room_id
-        self.last_activity = time.time()
+        self.created_at = time.time()  # Data stworzenia
+        
+        # Ostatnia aktywność (ping) graczy - inicjujemy czasem obecnym
+        self.p1_last_seen = time.time()
+        self.p2_last_seen = time.time()
         
         self.mode = "multi"
         self.p1_name = None; self.p2_name = None
@@ -69,7 +70,6 @@ class GameState:
         self.current_round_starter = "P1"; self.who_starts_next = "P1"
         self.p1_locked = False; self.p2_locked = False
         self.winner_last_round = None; self.last_correct_answer = ""
-        self.p1_last_seen = time.time(); self.p2_last_seen = time.time()
         self.disconnect_reason = ""
         self.active_category_name = "👕 Koszulki (Ligi)"
 
@@ -79,18 +79,33 @@ class RoomManager:
         self.rooms = {} 
 
     def get_room(self, room_id):
+        # Najpierw sprzątaj puste pokoje
         self.cleanup_rooms()
+        
         if room_id not in self.rooms:
             self.rooms[room_id] = GameState(room_id)
-        self.rooms[room_id].last_activity = time.time()
         return self.rooms[room_id]
 
     def cleanup_rooms(self):
         now = time.time()
-        # Usuń pokoje nieaktywne od 30 min
-        timeout = 1800 
-        to_delete = [rid for rid, r in self.rooms.items() if now - r.last_activity > timeout]
-        for rid in to_delete: del self.rooms[rid]
+        timeout = 10.0  # Czas (sekundy) bez sygnału, po którym usuwamy pokój
+        
+        to_delete = []
+        for rid, room in self.rooms.items():
+            # Sprawdzamy, czy gracze są online (czy wysłali sygnał w ciągu ostatnich X sekund)
+            # Jeśli gracz nie ma imienia (nie dołączył), to nie jest online.
+            p1_online = (now - room.p1_last_seen < timeout) 
+            p2_online = (now - room.p2_last_seen < timeout)
+            
+            # Zabezpieczenie: Nie usuwaj pokoju, który powstał przed chwilą (daj mu 15s na rozruch)
+            is_just_created = (now - room.created_at < 15.0)
+
+            # Jeśli nikt nie jest online i pokój nie jest nowy -> USUŃ
+            if not p1_online and not p2_online and not is_just_created:
+                to_delete.append(rid)
+        
+        for rid in to_delete:
+            del self.rooms[rid]
 
 @st.cache_resource
 def get_manager(): return RoomManager()
@@ -145,16 +160,18 @@ def handle_win(server, winner):
     else: server.p2_score += 1; server.who_starts_next = "P1"
     server.status = "round_over"
 
+def update_heartbeat(server, role):
+    # Aktualizujemy czas ostatniej aktywności gracza
+    if role == "P1": server.p1_last_seen = time.time()
+    elif role == "P2": server.p2_last_seen = time.time()
+
 def check_disconnections(server):
     if server.mode == "solo" or server.status not in ["playing", "round_over"]: return
     now = time.time()
+    # Tutaj limit jest większy (15s) niż limit usuwania pokoju (10s), 
+    # ale to dotyczy sytuacji w trakcie meczu.
     if now - server.p1_last_seen > 15: server.status="disconnected"; server.disconnect_reason=f"{server.p1_name} rozłączył się!"
     elif now - server.p2_last_seen > 15: server.status="disconnected"; server.disconnect_reason=f"{server.p2_name} rozłączył się!"
-
-def update_heartbeat(server, role):
-    if role == "P1": server.p1_last_seen = time.time()
-    elif role == "P2": server.p2_last_seen = time.time()
-    server.last_activity = time.time() 
 
 def reset_game(server):
     server.mode="multi"; server.p1_name=None; server.p2_name=None; server.p1_score=0; server.p2_score=0
@@ -172,7 +189,6 @@ def view_main_menu():
     
     c1, c2 = st.columns([3, 1])
     with c1:
-        # Dodajemy unikalny klucz, żeby nie gubił focusa
         room_input = st.text_input("Nazwa pokoju:", placeholder="np. Stolik1", key="room_input_field")
     with c2:
         st.write(""); st.write("")
@@ -183,6 +199,18 @@ def view_main_menu():
             else: st.error("Podaj nazwę!")
     st.markdown("</div>", unsafe_allow_html=True)
 
+    # Lista aktywnych pokoi
+    manager.cleanup_rooms()
+    active_rooms = list(manager.rooms.keys())
+    if active_rooms:
+        st.caption(f"🟢 Aktywne pokoje ({len(active_rooms)}): {', '.join(active_rooms)}")
+    else:
+        st.caption("Brak aktywnych pokoi. Stwórz pierwszy!")
+    
+    # Odświeżanie listy pokoi co kilka sekund
+    time.sleep(3)
+    st.rerun()
+
 def view_game_lobby(server):
     st.markdown(f"<h3 style='text-align: center;'>🚪 Pokój: {server.room_id}</h3>", unsafe_allow_html=True)
     
@@ -190,7 +218,6 @@ def view_game_lobby(server):
         del st.session_state.current_room_id; st.session_state.my_role = None; st.rerun()
 
     c1, c2 = st.columns(2)
-    # --- GRACZ 1 ---
     with c1:
         st.markdown("<div class='player-box p1-box'>GOSPODARZ (P1)</div>", unsafe_allow_html=True)
         if server.p1_name: st.success(f"✅ {server.p1_name}")
@@ -201,8 +228,6 @@ def view_game_lobby(server):
                 if n: server.p1_name=n; server.mode="multi"; st.session_state.my_role="P1"; st.rerun()
             if cc2.button("Solo"): 
                 if n: server.p1_name=n; server.mode="solo"; server.p2_name="CPU"; st.session_state.my_role="P1"; st.rerun()
-    
-    # --- GRACZ 2 ---
     with c2:
         if server.mode=="solo": st.info("Tryb Solo")
         else:
@@ -215,7 +240,6 @@ def view_game_lobby(server):
 
     st.divider()
     
-    # --- KONFIGURACJA (WIDOCZNA DLA WSZYSTKICH, ALE EDYTOWALNA DLA P1) ---
     if st.session_state.my_role == "P1":
         st.subheader("⚙️ Ustawienia")
         mode = st.selectbox("Wybierz kategorię:", list(GAME_MODES.keys()))
@@ -241,8 +265,6 @@ def view_game_lobby(server):
     elif st.session_state.my_role == "P2": 
         st.info("Czekanie na hosta... (P1 konfiguruje grę)")
     
-    # --- KLUCZOWA POPRAWKA: ODŚWIEŻANIE LOBBY DLA WSZYSTKICH ---
-    # Dzięki temu P1 zobaczy P2 od razu, a P2 zobaczy start gry
     time.sleep(1.5)
     st.rerun()
 
@@ -291,7 +313,6 @@ def view_playing(server):
         else: server.p2_locked=True
         st.rerun()
     
-    # Odświeżanie w trakcie gry
     if server.mode=="multi":
         if server.p1_locked and server.p2_locked:
             server.winner_last_round="NIKT"; server.last_correct_answer=server.current_team
@@ -338,10 +359,21 @@ def main():
         view_main_menu()
     else:
         room_id = st.session_state.current_room_id
+        
+        # Jeśli pokój został usunięty w międzyczasie (bo nikt nie grał)
+        # to wyrzucamy gracza do głównego menu
+        if room_id not in manager.rooms and 'my_role' not in st.session_state:
+             # Jeśli to dopiero wejście, manager stworzy pokój.
+             # Ale jeśli pokój zniknął w trakcie gry, trzeba uważać.
+             pass
+
         server = manager.get_room(room_id)
         
         if 'my_role' not in st.session_state: st.session_state.my_role = None
-        if st.session_state.my_role: update_heartbeat(server, st.session_state.my_role)
+        
+        # WAŻNE: Aktualizacja Heartbeatu dla RoomManagera
+        if st.session_state.my_role:
+            update_heartbeat(server, st.session_state.my_role)
         
         check_disconnections(server)
 
@@ -353,6 +385,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

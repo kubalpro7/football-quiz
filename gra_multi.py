@@ -6,11 +6,12 @@ import pandas as pd
 import requests
 from io import BytesIO
 from PIL import Image
+import datetime
 
 # ==============================================================================
-# 1. KONFIGURACJA
+# 1. KONFIGURACJA I STYL
 # ==============================================================================
-st.set_page_config(page_title="Football Quiz Ultimate", layout="centered", page_icon="⚽")
+st.set_page_config(page_title="Football Quiz Multi-Room", layout="centered", page_icon="⚽")
 
 st.markdown("""
     <style>
@@ -28,24 +29,39 @@ st.markdown("""
     .turn-alert { text-align: center; color: #ffca28; font-weight: bold; font-size: 18px; margin: 10px 0; }
     div[data-testid="column"] { display: flex; align-items: center; justify-content: center; }
     button { height: 50px !important; font-size: 16px !important; }
+    
+    /* Styl dla wyboru pokoju */
+    .room-box { border: 2px dashed #444; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px; }
     </style>
 """, unsafe_allow_html=True)
 
-# Lista Top 20 - Używana do filtra.
-# UWAGA: Nazwy tutaj muszą pasować do nazw w plikach CSV (szczególnie w herby_klubowe.csv)
+# Lista Top 20 (Filtry)
 TOP_20_CLUBS = [
     "Manchester City", "Real Madrid", "Bayern Munich", "Liverpool", "Inter Milan",
     "Bayer Leverkusen", "Arsenal", "Barcelona", "Atletico Madrid", "PSG",
     "Borussia Dortmund", "Juventus", "RB Leipzig", "Atalanta", "Benfica",
     "Chelsea", "AC Milan", "Sporting CP", "Napoli", "Tottenham",
-    "Paris Saint Germain", "Inter", "Milan", "Bayer 04 Leverkusen" # Dodatkowe warianty nazw z API
+    "Paris Saint Germain", "Inter", "Milan", "Bayer 04 Leverkusen"
 ]
 
+# Konfiguracja Trybów
+GAME_MODES = {
+    "👕 Koszulki (Ligi)": ("baza_zdjec.csv", "Jaki to klub?"),
+    "👤 Sylwetki Piłkarzy": ("sylwetki_pilkarzy.csv", "Kto to jest?"),
+    "🛡️ Herby Klubowe": ("herby_klubowe.csv", "Do kogo należy ten herb?")
+}
+
 # ==============================================================================
-# 2. STAN SERWERA
+# 2. STRUKTURA POKOI (NOWOŚĆ!)
 # ==============================================================================
-class GlobalGameState:
-    def __init__(self):
+
+class GameState:
+    """Stan pojedynczego stolika gry"""
+    def __init__(self, room_id):
+        self.room_id = room_id
+        self.created_at = time.time()
+        self.last_activity = time.time()
+        
         self.mode = "multi"
         self.p1_name = None; self.p2_name = None
         self.p1_score = 0; self.p2_score = 0
@@ -59,26 +75,40 @@ class GlobalGameState:
         self.disconnect_reason = ""
         self.active_category_name = "👕 Koszulki (Ligi)"
 
+class RoomManager:
+    """Zarządza wieloma stolikami"""
+    def __init__(self):
+        self.rooms = {} # Słownik: {"nazwa_pokoju": GameState}
+
+    def get_room(self, room_id):
+        # Usuwanie starych, pustych pokoi (np. starszych niż 1h bez aktywności)
+        self.cleanup_rooms()
+        
+        if room_id not in self.rooms:
+            self.rooms[room_id] = GameState(room_id)
+        
+        # Aktualizacja czasu życia pokoju
+        self.rooms[room_id].last_activity = time.time()
+        return self.rooms[room_id]
+
+    def cleanup_rooms(self):
+        now = time.time()
+        # Usuń pokoje nieaktywne od 30 minut
+        timeout = 1800 
+        to_delete = [rid for rid, r in self.rooms.items() if now - r.last_activity > timeout]
+        for rid in to_delete:
+            del self.rooms[rid]
+
 @st.cache_resource
-def get_server_state(): return GlobalGameState()
-server = get_server_state()
+def get_manager():
+    return RoomManager()
 
-# --- KONFIGURACJA TRYBÓW (TUTAJ DODANO HERBY) ---
-GAME_MODES = {
-    "👕 Koszulki (Ligi)": ("baza_zdjec.csv", "Jaki to klub?"),
-    "👤 Sylwetki Piłkarzy": ("sylwetki_pilkarzy.csv", "Kto to jest?"),
-    "🛡️ Herby Klubowe": ("herby_klubowe.csv", "Do kogo należy ten herb?") # NOWOŚĆ
-}
+# Pobieramy globalnego menadżera (Singleton)
+manager = get_manager()
 
-def update_heartbeat(role):
-    if role == "P1": server.p1_last_seen = time.time()
-    elif role == "P2": server.p2_last_seen = time.time()
-
-def check_disconnections():
-    if server.mode == "solo" or server.status not in ["playing", "round_over"]: return
-    now = time.time()
-    if now - server.p1_last_seen > 15: server.status="disconnected"; server.disconnect_reason=f"{server.p1_name} rozłączył się!"
-    elif now - server.p2_last_seen > 15: server.status="disconnected"; server.disconnect_reason=f"{server.p2_name} rozłączył się!"
+# ==============================================================================
+# 3. POMOCNICZE FUNKCJE LOGIKI
+# ==============================================================================
 
 def get_available_leagues(csv_path):
     if not os.path.exists(csv_path): return []
@@ -88,41 +118,27 @@ def get_available_leagues(csv_path):
         return []
     except: return []
 
-def load_images_filtered(csv_path, selected_leagues, use_top_20_filter=False):
+def load_images_filtered(server, csv_path, selected_leagues, use_top_20_filter=False):
     server.image_pool = []
     if not os.path.exists(csv_path): return
 
     try:
         df = pd.read_csv(csv_path)
+        if selected_leagues: df = df[df['Liga'].isin(selected_leagues)]
         
-        # 1. Filtrowanie po ligach
-        if selected_leagues:
-            df = df[df['Liga'].isin(selected_leagues)]
-        
-        # 2. Filtr Top 20 (opcjonalny)
         if use_top_20_filter:
-            # Sprawdzenie różnych nazw kolumn w zależności od pliku CSV
             col_to_check = None
             if 'Klub_Filter' in df.columns: col_to_check = 'Klub_Filter'
             elif 'Klub' in df.columns: col_to_check = 'Klub'
             elif 'Odpowiedz' in df.columns: col_to_check = 'Odpowiedz'
-            
-            if col_to_check:
-                # Filtrujemy
-                df = df[df[col_to_check].isin(TOP_20_CLUBS)]
+            if col_to_check: df = df[df[col_to_check].isin(TOP_20_CLUBS)]
         
-        # 3. Zapisywanie do puli
-        # Ustalenie która kolumna jest odpowiedzią
         ans_col = 'Odpowiedz' if 'Odpowiedz' in df.columns else 'Klub'
-        link_col = 'Link_Bezposredni'
-        
         for _, row in df.iterrows():
-            server.image_pool.append((row[ans_col], row[link_col]))
-            
-    except Exception as e:
-        st.error(f"Błąd CSV: {e}")
+            server.image_pool.append((row[ans_col], row['Link_Bezposredni']))
+    except Exception as e: st.error(f"Błąd CSV: {e}")
 
-def start_new_round():
+def start_new_round(server):
     if not server.image_pool: return
     team, img_url = random.choice(server.image_pool)
     server.current_team = team; server.current_image = img_url
@@ -132,31 +148,71 @@ def start_new_round():
     if server.mode == "solo": server.current_round_starter = "P1"
     else: server.current_round_starter = server.who_starts_next
 
-def handle_guess(guess): return guess == server.current_team
-def handle_wrong(role):
-    server.input_reset_counter += 1
-    if server.mode == "solo": return
-    if role == "P1": server.p1_locked = True; server.p2_locked = False
-    else: server.p2_locked = True; server.p1_locked = False
-def handle_surrender(role):
-    server.input_reset_counter += 1
-    if server.mode == "solo": server.winner_last_round="NIKT"; server.last_correct_answer=server.current_team; server.status="round_over"; return
-    if role == "P1": server.p1_locked = True
-    else: server.p2_locked = True
-def handle_win(winner):
+def handle_guess(server, guess): return guess == server.current_team
+def handle_win(server, winner):
     server.winner_last_round = winner; server.last_correct_answer = server.current_team
     if winner == "P1": server.p1_score += 1; server.who_starts_next = "P2"
     else: server.p2_score += 1; server.who_starts_next = "P1"
     server.status = "round_over"
-def reset_game():
+
+def check_disconnections(server):
+    if server.mode == "solo" or server.status not in ["playing", "round_over"]: return
+    now = time.time()
+    if now - server.p1_last_seen > 15: server.status="disconnected"; server.disconnect_reason=f"{server.p1_name} rozłączył się!"
+    elif now - server.p2_last_seen > 15: server.status="disconnected"; server.disconnect_reason=f"{server.p2_name} rozłączył się!"
+
+def update_heartbeat(server, role):
+    if role == "P1": server.p1_last_seen = time.time()
+    elif role == "P2": server.p2_last_seen = time.time()
+    server.last_activity = time.time() # Ważne dla RoomManagera
+
+def reset_game(server):
     server.mode="multi"; server.p1_name=None; server.p2_name=None; server.p1_score=0; server.p2_score=0
     server.status="lobby"; server.p1_locked=False; server.p2_locked=False; server.who_starts_next="P1"
 
 # ==============================================================================
-# 3. WIDOKI
+# 4. EKRAN STARTOWY (WYBÓR POKOJU)
 # ==============================================================================
-def view_lobby():
-    st.markdown("<h2 style='text-align: center;'>🏆 LOBBY</h2>", unsafe_allow_html=True)
+
+def view_main_menu():
+    st.markdown("<h1 style='text-align: center;'>⚽ FOOTBALL QUIZ</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #888;'>Wybierz stolik, aby rozpocząć grę</p>", unsafe_allow_html=True)
+    
+    st.markdown("<div class='room-box'>", unsafe_allow_html=True)
+    
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        room_input = st.text_input("Nazwa pokoju (np. Stolik1, LigaMistrzow):", placeholder="Wpisz nazwę pokoju...")
+    with c2:
+        st.write("") # Spacer
+        st.write("")
+        if st.button("DOŁĄCZ 🚪", type="primary", use_container_width=True):
+            if room_input:
+                st.session_state.current_room_id = room_input
+                st.rerun()
+            else:
+                st.error("Podaj nazwę pokoju!")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Lista aktywnych pokoi (Opcjonalnie)
+    active_rooms = list(manager.rooms.keys())
+    if active_rooms:
+        st.caption(f"Aktywne pokoje: {', '.join(active_rooms)}")
+
+# ==============================================================================
+# 5. WIDOKI GRY (WEWNĄTRZ POKOJU)
+# ==============================================================================
+
+def view_game_lobby(server):
+    st.markdown(f"<h2 style='text-align: center;'>🚪 Pokój: {server.room_id}</h2>", unsafe_allow_html=True)
+    
+    # Przycisk wyjścia
+    if st.sidebar.button("🔙 Zmień Pokój"):
+        del st.session_state.current_room_id
+        st.session_state.my_role = None
+        st.rerun()
+
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("<div class='player-box p1-box'>GOSPODARZ (P1)</div>", unsafe_allow_html=True)
@@ -182,15 +238,11 @@ def view_lobby():
     
     if st.session_state.my_role == "P1":
         st.subheader("⚙️ Ustawienia")
-        # Wybór kategorii (Teraz są 3 opcje)
         mode = st.selectbox("Wybierz kategorię:", list(GAME_MODES.keys()))
         csv_file, _ = GAME_MODES[mode]
         
-        # Wybór Lig
         all_leagues = get_available_leagues(csv_file)
         sel_leagues = st.multiselect("Wybierz ligi:", all_leagues, default=all_leagues)
-        
-        # Filtr Top 20
         use_top20 = st.checkbox("🏆 Tylko Top 20 (Ranking)", value=False)
         
         ready = (server.mode=="solo" and server.p1_name) or (server.mode=="multi" and server.p1_name and server.p2_name)
@@ -199,18 +251,18 @@ def view_lobby():
             if st.button("START MECZU 🚀", type="primary", use_container_width=True):
                 if not sel_leagues: st.error("Wybierz ligę!")
                 else:
-                    load_images_filtered(csv_file, sel_leagues, use_top20)
+                    load_images_filtered(server, csv_file, sel_leagues, use_top20)
                     server.active_category_name = mode
-                    if not server.image_pool: st.error(f"Brak zdjęć! (Może filtr Top 20 wykluczył wszystko? Sprawdź nazwy klubów w CSV)")
-                    else: server.p1_last_seen=time.time(); server.p2_last_seen=time.time(); start_new_round(); st.rerun()
+                    if not server.image_pool: st.error(f"Brak zdjęć! Sprawdź filtry.")
+                    else: server.p1_last_seen=time.time(); server.p2_last_seen=time.time(); start_new_round(server); st.rerun()
         elif server.mode == "multi": st.warning("Czekamy na P2...")
             
     elif st.session_state.my_role == "P2": st.info("Czekanie na hosta..."); time.sleep(1); st.rerun()
     else: time.sleep(1); st.rerun()
 
-def view_playing():
+def view_playing(server):
     _, q_label = GAME_MODES.get(server.active_category_name, ("", "Wybierz:"))
-    st.caption(f"Kategoria: {server.active_category_name}")
+    st.caption(f"Pokój: {server.room_id} | Kategoria: {server.active_category_name}")
     
     if server.mode=="solo": st.markdown(f"<div class='score-board' style='justify-content:center'>{server.p1_score}</div>", unsafe_allow_html=True)
     else: st.markdown(f"<div class='score-board'><span>{server.p1_name}: {server.p1_score}</span><span>VS</span><span>{server.p2_name}: {server.p2_score}</span></div>", unsafe_allow_html=True)
@@ -219,7 +271,6 @@ def view_playing():
         if server.p1_locked: st.warning(f"{server.p1_name} zablokowany!")
         elif server.p2_locked: st.warning(f"{server.p2_name} zablokowany!")
 
-    # Wyświetlanie zdjęcia (Requests + PIL)
     if server.current_image:
         try:
             r = requests.get(server.current_image); r.raise_for_status()
@@ -228,21 +279,31 @@ def view_playing():
 
     opts = sorted(list(set([x[0] for x in server.image_pool]))) if server.image_pool else []
     
-    with st.form(f"gf_{server.round_id}_{server.input_reset_counter}"):
+    with st.form(f"gf_{server.room_id}_{server.round_id}_{server.input_reset_counter}"):
         guess = st.selectbox(q_label, [""]+opts)
         c1, c2 = st.columns([3,1])
         sub = c1.form_submit_button("ZGŁASZAM 🎯", type="primary", use_container_width=True)
         surr = c2.form_submit_button("🏳️", use_container_width=True)
-        if st.session_state.my_role=="P1": st.form_submit_button("Koniec", on_click=lambda: setattr(server,'status','finished'))
+        if st.session_state.my_role=="P1": st.form_submit_button("Zakończ Mecz", on_click=lambda: setattr(server,'status','finished'))
 
     role = st.session_state.my_role
     if sub and guess:
         locked = (role=="P1" and server.p1_locked) or (role=="P2" and server.p2_locked)
         if not locked:
-            if handle_guess(guess): handle_win(role); st.rerun()
-            else: handle_wrong(role); st.toast("ŹLE!"); st.rerun()
+            if handle_guess(server, guess): handle_win(server, role); st.rerun()
+            else: 
+                server.input_reset_counter += 1
+                if role=="P1": server.p1_locked=True; server.p2_locked=False
+                else: server.p2_locked=True; server.p1_locked=False
+                st.toast("ŹLE!"); st.rerun()
         else: st.toast("Czekaj!")
-    if surr: handle_surrender(role); st.rerun()
+    
+    if surr: 
+        server.input_reset_counter += 1
+        if server.mode=="solo": server.winner_last_round="NIKT"; server.last_correct_answer=server.current_team; server.status="round_over"
+        elif role=="P1": server.p1_locked=True
+        else: server.p2_locked=True
+        st.rerun()
     
     if server.mode=="multi":
         if server.p1_locked and server.p2_locked:
@@ -251,7 +312,7 @@ def view_playing():
             server.status="round_over"; st.rerun()
         time.sleep(1); st.rerun()
 
-def view_round_over():
+def view_round_over(server):
     if st.session_state.my_role=="P1" and st.sidebar.button("Zakończ"): server.status="finished"; st.rerun()
     
     col, txt = ("#555", "Nikt")
@@ -268,32 +329,53 @@ def view_round_over():
     st.divider()
     nxt = server.who_starts_next if server.mode=="multi" else "P1"
     if st.session_state.my_role == nxt:
-        if st.button("DALEJ ➡️", type="primary", use_container_width=True): start_new_round(); st.rerun()
+        if st.button("DALEJ ➡️", type="primary", use_container_width=True): start_new_round(server); st.rerun()
     else: st.info(f"Czekaj na {nxt}..."); time.sleep(1); st.rerun()
 
-def view_finished():
+def view_finished(server):
     st.title("KONIEC"); st.header(f"{server.p1_score} - {server.p2_score}")
-    if st.button("LOBBY"): reset_game(); st.rerun()
+    if st.button("LOBBY POKOJU 🔄"): reset_game(server); st.rerun()
+    if st.button("ZMIEŃ POKÓJ 🚪"): 
+        del st.session_state.current_room_id
+        st.rerun()
 
-def view_disconnected():
+def view_disconnected(server):
     st.error(f"🚨 WALKOWER! {server.disconnect_reason}")
-    if st.button("WRÓĆ DO LOBBY 🏠", type="primary"): reset_game(); st.rerun()
+    if st.button("WRÓĆ DO LOBBY 🏠", type="primary"): reset_game(server); st.rerun()
     time.sleep(2); st.rerun()
 
+# ==============================================================================
+# 6. GŁÓWNA PĘTLA APLIKACJI
+# ==============================================================================
+
 def main():
-    if 'my_role' not in st.session_state: st.session_state.my_role = None
-    if st.session_state.my_role: update_heartbeat(st.session_state.my_role)
-    check_disconnections()
-    if st.sidebar.button("RESET"): reset_game(); st.rerun()
-    
-    if server.status == "lobby": view_lobby()
-    elif server.status == "playing": view_playing()
-    elif server.status == "round_over": view_round_over()
-    elif server.status == "finished": view_finished()
-    elif server.status == "disconnected": view_disconnected()
+    # 1. Sprawdzamy, czy użytkownik jest w pokoju
+    if 'current_room_id' not in st.session_state:
+        # Jeśli nie, pokazujemy wybór pokoi
+        view_main_menu()
+    else:
+        # 2. Jeśli jest w pokoju, pobieramy stan TEGO KONKRETNEGO pokoju
+        room_id = st.session_state.current_room_id
+        server = manager.get_room(room_id)
+        
+        # Inicjalizacja roli w sesji (dla danej karty przeglądarki)
+        if 'my_role' not in st.session_state: st.session_state.my_role = None
+        
+        if st.session_state.my_role:
+            update_heartbeat(server, st.session_state.my_role)
+        
+        check_disconnections(server)
+
+        # Wyświetlanie odpowiedniego widoku
+        if server.status == "lobby": view_game_lobby(server)
+        elif server.status == "playing": view_playing(server)
+        elif server.status == "round_over": view_round_over(server)
+        elif server.status == "finished": view_finished(server)
+        elif server.status == "disconnected": view_disconnected(server)
 
 if __name__ == "__main__":
     main()
+
 
 
 

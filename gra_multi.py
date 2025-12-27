@@ -1,24 +1,3 @@
-Świetnie! Plik herby_klubowe.csv wygląda idealnie – ma strukturę Liga, Klub, Link_Bezposredni, więc pasuje do Twojego obecnego kodu bez żadnych skomplikowanych przeróbek.
-
-Oto zaktualizowany kod main.py, który dodaje kategorię "🛡️ Herby Klubowe".
-
-Co się zmieniło?
-Dodałem tylko jedną linię w konfiguracji GAME_MODES. Teraz gra widzi 3 pliki i pozwala wybrać herby w menu.
-
-📋 Instrukcja:
-Upewnij się, że w folderze projektu masz teraz 3 pliki CSV:
-
-baza_zdjec.csv (Koszulki)
-
-sylwetki_pilkarzy.csv (Sylwetki)
-
-herby_klubowe.csv (Herby - ten nowy)
-
-Podmień kod w main.py na poniższy.
-
-💻 Nowy kod gry (main.py)
-Python
-
 import streamlit as st
 import os
 import random
@@ -315,6 +294,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
